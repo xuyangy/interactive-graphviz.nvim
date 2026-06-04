@@ -252,10 +252,6 @@ local function promote(tmp_path, final_path)
     remove_file(tmp_path)
     fail("atomic rename failed for " .. final_path .. ": " .. tostring(err))
   end
-  local chmod_ok, chmod_err = vim.uv.fs_chmod(final_path, 493)
-  if not chmod_ok then
-    fail("failed to apply executable mode to " .. final_path .. ": " .. tostring(chmod_err))
-  end
 end
 
 local function quarantine_absent(text)
@@ -278,12 +274,24 @@ local function strip_macos_quarantine(path)
   end
 end
 
+local function prepare_binary_for_spawn(final_path, os_name)
+  local chmod_ok, chmod_err = vim.uv.fs_chmod(final_path, 493)
+  if not chmod_ok then
+    fail("failed to apply executable mode to " .. final_path .. ": " .. tostring(chmod_err))
+  end
+
+  if os_name == "Darwin" then
+    strip_macos_quarantine(final_path)
+  end
+end
+
 local function ensure_binary(root, artifact, expected, os_name)
   local bin_dir = path_join(root, BIN_DIR)
   local final_path = path_join(bin_dir, artifact)
 
   local existing_digest = digest_file(final_path)
   if existing_digest and existing_digest:lower() == expected then
+    prepare_binary_for_spawn(final_path, os_name)
     return final_path
   end
 
@@ -296,9 +304,7 @@ local function ensure_binary(root, artifact, expected, os_name)
     download_to_tmp(release_url(artifact), tmp_path)
     verify_file(tmp_path, expected, artifact)
     promote(tmp_path, final_path)
-    if os_name == "Darwin" then
-      strip_macos_quarantine(final_path)
-    end
+    prepare_binary_for_spawn(final_path, os_name)
   end)
   if not ok then
     remove_file(tmp_path)

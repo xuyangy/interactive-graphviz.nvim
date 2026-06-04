@@ -6,7 +6,7 @@ baseline_commit: 1b60a60c76c8685a9c5d2a33d31c7f1c4ce70f80
 
 # Story 3.2: Prebuilt binary install with integrity verification
 
-Status: review
+Status: done
 
 ## Story
 
@@ -57,6 +57,10 @@ so that it just works with zero prerequisites and a tampered/corrupt download is
 - [x] Add minimal documentation or inline completion notes for implementation handoff (AC: 2, 4, 6)
   - [x] Document the pinned release tag and how it relates to committed `checksums.txt`.
   - [x] Document that source-build fallback remains Story 3.3 and must not be quietly implemented here.
+
+### Review Findings
+
+- [x] [Review][Patch] Verified cache hit skipped executable/quarantine preparation [lua/interactive-graphviz/install.lua:285]
 
 ## Dev Notes
 
@@ -152,6 +156,7 @@ GPT-5 Codex
 
 - 2026-06-05T00:02:42+0200: `busted tests/install_spec.lua` unavailable locally (`command not found`); added and exercised tests with a Lua compatibility runner.
 - 2026-06-05T00:07:38+0200: Validation passed: `stylua --check .`, `nvim --headless -i NONE -u tests/minimal_init.lua -l tests/nvim_smoke.lua -c qa`, `bun test server`, installer spec compatibility runner, Lua syntax load, `git diff --check`.
+- 2026-06-05T00:13:50+0200: Review patch applied for cached binary chmod/quarantine preparation; validations rerun green except local `busted` remains unavailable.
 
 ### Implementation Plan
 
@@ -166,6 +171,7 @@ GPT-5 Codex
 - Added strict committed manifest parsing, SHA-256 verification via `vim.fn.sha256`, temp download, atomic promotion, chmod, cleanup, and macOS quarantine stripping.
 - Added focused busted-compatible installer tests for mapping, manifest failures, cache hit, corrupt download refusal, promotion/chmod, and quarantine strip.
 - Documented pinned release tag `v0.1.0`; source-build fallback remains explicitly deferred to Story 3.3.
+- Review fixed cached verified binaries so chmod and macOS quarantine handling are retried before returning a spawn command.
 
 ### File List
 - `_bmad-output/implementation-artifacts/3-2-prebuilt-binary-install-with-integrity-verification.md`

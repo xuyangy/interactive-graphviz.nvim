@@ -63,6 +63,9 @@ local function load_install(opts)
       end,
       fs_chmod = function(path, mode)
         table.insert(chmodded, { path = path, mode = mode })
+        if opts.chmod_fails then
+          return nil, "chmod failed"
+        end
         return true
       end,
       fs_unlink = function(path)
@@ -211,6 +214,53 @@ describe("install manifest and verification", function()
       assert.are_not.equal("curl", call[1])
       assert.are_not.equal("wget", call[1])
     end
+  end)
+
+  it("prepares a verified cached binary before returning it", function()
+    local root = make_root()
+    local data = "cached-binary"
+    local digest = sha256(data)
+    write_file(root .. "/checksums.txt", digest .. "  server-darwin-arm64\n")
+    write_file(root .. "/dist/bin/server-darwin-arm64", data)
+
+    local install, calls, _, chmodded = load_install({
+      root = root,
+      manifest_path = root .. "/checksums.txt",
+      executable = { curl = 1, wget = 0, xattr = 1 },
+    })
+    local cmd = install.resolve_server_cmd()
+
+    assert.are.same({ root .. "/dist/bin/server-darwin-arm64" }, cmd)
+    assert.are.equal(1, #chmodded)
+    assert.are.equal(493, chmodded[1].mode)
+
+    local saw_xattr = false
+    for _, call in ipairs(calls) do
+      if call[1] == "xattr" then
+        saw_xattr = true
+      end
+    end
+    assert.is_true(saw_xattr)
+  end)
+
+  it("does not hide macOS quarantine failures on a verified cached binary", function()
+    local root = make_root()
+    local data = "cached-binary"
+    local digest = sha256(data)
+    write_file(root .. "/checksums.txt", digest .. "  server-darwin-arm64\n")
+    write_file(root .. "/dist/bin/server-darwin-arm64", data)
+
+    local install = load_install({
+      root = root,
+      manifest_path = root .. "/checksums.txt",
+      executable = { curl = 1, wget = 0, xattr = 1 },
+      xattr_code = 1,
+      xattr_stderr = "permission denied",
+    })
+
+    assert.has_error(function()
+      install.resolve_server_cmd()
+    end)
   end)
 
   it("does not promote corrupt downloads or return a runnable command", function()
