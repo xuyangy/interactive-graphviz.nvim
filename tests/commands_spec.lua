@@ -12,6 +12,7 @@ local function make_vim(opts)
   local lines = opts.lines or { "digraph{a->b}" }
   local opened_urls = opts.opened_urls or {}
   local system_calls = opts.system_calls or {}
+  local buf_valid = opts.buf_valid ~= false -- default true
 
   local bo_proxy = setmetatable({}, {
     __index = function(_, _)
@@ -31,6 +32,14 @@ local function make_vim(opts)
       nvim_buf_get_lines = function(_, _, _, _)
         return lines
       end,
+      nvim_buf_is_valid = function(_)
+        return buf_valid
+      end,
+      nvim_create_augroup = function(_, _)
+        return 1
+      end,
+      nvim_create_autocmd = function(_, _) end,
+      nvim_del_augroup_by_name = function(_) end,
     },
     bo = bo_proxy,
     split = function(str, _, _)
@@ -52,6 +61,15 @@ local function make_vim(opts)
     schedule = function(fn)
       fn()
     end,
+    uv = {
+      new_timer = function()
+        local t = {}
+        t.start = function(_, _, _, _) end
+        t.stop = function(_) end
+        t.close = function(_) end
+        return t
+      end,
+    },
   }
 end
 
@@ -63,12 +81,20 @@ local function make_server(opts)
     state = opts.state or { running = true, port = 9876, token = "tok-abc" },
     open_session_returns = opts.open_session_returns ~= false,
     open_session_calls = {},
+    close_session_calls = {},
+    shutdown_calls = {},
     send_calls = {},
     on_ready_calls = {},
   }
   self.open_session = function(bufnr)
     table.insert(self.open_session_calls, bufnr)
     return self.open_session_returns
+  end
+  self.close_session = function(bufnr)
+    table.insert(self.close_session_calls, bufnr)
+  end
+  self.shutdown = function()
+    table.insert(self.shutdown_calls, true)
   end
   self.send = function(msg)
     table.insert(self.send_calls, msg)
@@ -82,13 +108,42 @@ local function make_server(opts)
   return self
 end
 
-local function make_session()
+local function make_session(opts)
+  opts = opts or {}
   local versions = {}
+  local active = opts.active or {}
   return {
+    has = function(bufnr)
+      return active[bufnr] == true
+    end,
+    count = function()
+      local n = 0
+      for _ in pairs(active) do
+        n = n + 1
+      end
+      return n
+    end,
     next_version = function(bufnr)
       versions[bufnr] = (versions[bufnr] or 0) + 1
       return versions[bufnr]
     end,
+    _active = active,
+  }
+end
+
+local function make_render()
+  local calls = {}
+  return {
+    stop_watch = function(bufnr)
+      table.insert(calls, { fn = "stop_watch", bufnr = bufnr })
+    end,
+    stop_all = function()
+      table.insert(calls, { fn = "stop_all" })
+    end,
+    start_watch = function(bufnr)
+      table.insert(calls, { fn = "start_watch", bufnr = bufnr })
+    end,
+    _calls = calls,
   }
 end
 
@@ -102,23 +157,36 @@ end
 
 local function make_log()
   local notified = {}
+  local warned = {}
   return {
     notify = function(msg, _)
       table.insert(notified, msg)
     end,
+    warn = function(msg)
+      table.insert(warned, msg)
+    end,
     _notified = notified,
+    _warned = warned,
   }
 end
 
 -- ── helpers ───────────────────────────────────────────────────────────────────
 
-local function load_commands(vim_stub, server_stub, session_stub, config_stub, log_stub)
+local function load_commands(
+  vim_stub,
+  server_stub,
+  session_stub,
+  config_stub,
+  log_stub,
+  render_stub
+)
   _G.vim = vim_stub
 
   package.loaded["interactive-graphviz.server"] = server_stub
   package.loaded["interactive-graphviz.session"] = session_stub
   package.loaded["interactive-graphviz.config"] = config_stub
   package.loaded["interactive-graphviz.log"] = log_stub
+  package.loaded["interactive-graphviz.render"] = render_stub or make_render()
   package.loaded["interactive-graphviz.commands"] = nil -- force reload
 
   return require("interactive-graphviz.commands")
@@ -134,6 +202,7 @@ describe("commands.preview", function()
     package.loaded["interactive-graphviz.session"] = nil
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
     _G.vim = nil
   end)
 
@@ -292,13 +361,16 @@ describe("commands.preview", function()
     cmd.preview()
     cmd.preview() -- second call
 
-    -- open_session called twice (it is idempotent server-side; commands calls it each time)
+    -- open_session called twice: the Story 1.7 idempotency guard requires BOTH
+    -- session.has(bufnr)==true AND server.state.running==true. This stub's session
+    -- does not auto-register on open_session, so session.has() stays false — guard
+    -- does not fire and both calls go through.
     assert.are.equal(2, #server.open_session_calls)
     -- two render envelopes sent (one per call), v increments
     assert.are.equal(2, #server.send_calls)
     assert.are.equal(1, server.send_calls[1].v)
     assert.are.equal(2, server.send_calls[2].v)
-    -- browser opened twice (idempotent from server's perspective; Story 1.7 adds a guard)
+    -- browser opened twice (guard not triggered — see comment above)
     assert.are.equal(2, #opened)
   end)
 
@@ -321,5 +393,224 @@ describe("commands.preview", function()
     assert.are.equal(0, #server.send_calls, "no render on server failure")
     assert.are.equal(0, #opened, "no browser open on server failure")
     assert.are.equal(1, #log._notified, "must log failure message")
+  end)
+
+  -- ── AC5 (Story 1.7): idempotency guard — no second browser tab ──────────
+
+  it("second preview() with active session and running server does NOT re-open browser", function()
+    local opened = {}
+    local bufnr = 20
+    -- Session already has bufnr active AND server is running
+    local session_mod = make_session({ active = { [bufnr] = true } })
+    local server = make_server({ state = { running = true, port = 9876, token = "tok-abc" } })
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr, opened_urls = opened }),
+      server,
+      session_mod,
+      make_config(),
+      make_log()
+    )
+
+    cmd.preview()
+
+    -- The idempotency guard fires: send a render but do NOT open browser.
+    assert.are.equal(0, #server.open_session_calls, "must not call open_session on re-preview")
+    assert.are.equal(0, #server.on_ready_calls, "must not register on_ready callback on re-preview")
+    assert.are.equal(0, #opened, "must not open a second browser tab")
+    assert.are.equal(1, #server.send_calls, "must still send a render refresh")
+    assert.are.equal("render", server.send_calls[1].type)
+  end)
+end)
+
+-- ── commands.stop ─────────────────────────────────────────────────────────────
+
+describe("commands.stop", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    _G.vim = nil
+  end)
+
+  it(
+    "stop() with an active session: calls stop_watch, close_session, and shutdown (last session)",
+    function()
+      local bufnr = 5
+      local active = { [bufnr] = true }
+      local session_mod = make_session({ active = active })
+      local server = make_server()
+      local render = make_render()
+
+      -- Wire close_session to also unregister so count() drops to 0
+      server.close_session = function(b)
+        table.insert(server.close_session_calls, b)
+        active[b] = nil
+      end
+
+      local cmd = load_commands(
+        make_vim({ filetype = "dot", bufnr = bufnr }),
+        server,
+        session_mod,
+        make_config(),
+        make_log(),
+        render
+      )
+
+      cmd.stop()
+
+      assert.are.equal(1, #render._calls, "stop_watch must be called once")
+      assert.are.equal("stop_watch", render._calls[1].fn)
+      assert.are.equal(bufnr, render._calls[1].bufnr)
+
+      assert.are.equal(1, #server.close_session_calls, "close_session must be called")
+      assert.are.equal(bufnr, server.close_session_calls[1])
+
+      assert.are.equal(1, #server.shutdown_calls, "shutdown must be called when last session gone")
+    end
+  )
+
+  it("stop() with no active session: idempotent — no calls, no error", function()
+    local bufnr = 7
+    local session_mod = make_session({ active = {} }) -- no sessions
+    local server = make_server()
+    local render = make_render()
+
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr }),
+      server,
+      session_mod,
+      make_config(),
+      make_log(),
+      render
+    )
+
+    cmd.stop()
+
+    assert.are.equal(0, #render._calls, "stop_watch must NOT be called when no session")
+    assert.are.equal(0, #server.close_session_calls, "close_session must NOT be called")
+    assert.are.equal(0, #server.shutdown_calls, "shutdown must NOT be called")
+  end)
+
+  it("stop() with two sessions active: does NOT call shutdown after removing one", function()
+    local bufnr1 = 8
+    local bufnr2 = 9
+    local active = { [bufnr1] = true, [bufnr2] = true }
+    local session_mod = make_session({ active = active })
+    local server = make_server()
+    local render = make_render()
+
+    -- Wire close_session to unregister only the target buffer
+    server.close_session = function(b)
+      table.insert(server.close_session_calls, b)
+      active[b] = nil
+    end
+
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr1 }),
+      server,
+      session_mod,
+      make_config(),
+      make_log(),
+      render
+    )
+
+    cmd.stop() -- stops bufnr1 only; bufnr2 still active
+
+    assert.are.equal(1, #render._calls, "stop_watch called once for bufnr1")
+    assert.are.equal(bufnr1, render._calls[1].bufnr)
+    assert.are.equal(1, #server.close_session_calls)
+    assert.are.equal(
+      0,
+      #server.shutdown_calls,
+      "shutdown must NOT be called — bufnr2 still active"
+    )
+  end)
+end)
+
+-- ── commands.toggle ───────────────────────────────────────────────────────────
+
+describe("commands.toggle", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    _G.vim = nil
+  end)
+
+  it("toggle() when session exists: calls stop path (stop_watch + close_session)", function()
+    local bufnr = 11
+    local active = { [bufnr] = true }
+    local session_mod = make_session({ active = active })
+    local server = make_server()
+    local render = make_render()
+
+    server.close_session = function(b)
+      table.insert(server.close_session_calls, b)
+      active[b] = nil
+    end
+
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr }),
+      server,
+      session_mod,
+      make_config(),
+      make_log(),
+      render
+    )
+
+    cmd.toggle()
+
+    -- Should have taken the stop path
+    assert.are.equal(1, #render._calls, "stop_watch must be called via toggle→stop")
+    assert.are.equal("stop_watch", render._calls[1].fn)
+    assert.are.equal(
+      1,
+      #server.close_session_calls,
+      "close_session must be called via toggle→stop"
+    )
+    -- open_session must NOT be called (preview path not taken)
+    assert.are.equal(
+      0,
+      #server.open_session_calls,
+      "open_session must not be called when toggling off"
+    )
+  end)
+
+  it("toggle() when no session: calls preview path (open_session called)", function()
+    local bufnr = 12
+    local session_mod = make_session({ active = {} }) -- no active session
+    local server = make_server()
+    local render = make_render()
+
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr }),
+      server,
+      session_mod,
+      make_config(),
+      make_log(),
+      render
+    )
+
+    cmd.toggle()
+
+    -- Should have taken the preview path
+    assert.are.equal(
+      1,
+      #server.open_session_calls,
+      "open_session must be called via toggle→preview"
+    )
+    -- stop_watch was called as pre-watch reset (before start_watch) — expected
+    -- close_session must NOT be called (stop path not taken)
+    assert.are.equal(
+      0,
+      #server.close_session_calls,
+      "close_session must not be called when toggling on"
+    )
   end)
 end)
