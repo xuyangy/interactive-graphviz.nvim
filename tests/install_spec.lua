@@ -24,6 +24,7 @@ local function load_install(opts)
   local system_calls = {}
   local promoted = {}
   local chmodded = {}
+  local notifications = {}
   local downloads = opts.downloads or {}
   local executable = opts.executable or { curl = 1, wget = 0, xattr = 0 }
 
@@ -51,7 +52,19 @@ local function load_install(opts)
       glob = function(_)
         return opts.glob or ""
       end,
+      filereadable = function(path)
+        local f = io.open(path, "rb")
+        if f then
+          f:close()
+          return 1
+        end
+        return 0
+      end,
     },
+    log = { levels = { ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4, TRACE = 5 } },
+    notify = function(message, level)
+      table.insert(notifications, { message = message, level = level })
+    end,
     uv = {
       fs_rename = function(src, dst)
         table.insert(promoted, { src = src, dst = dst })
@@ -95,6 +108,16 @@ local function load_install(opts)
       elseif name == "xattr" then
         code = opts.xattr_code or 0
         stderr = opts.xattr_stderr or ""
+      elseif name == "bun" and cmd[2] == "--version" then
+        stdout = opts.bun_version or "1.3.10"
+        code = opts.bun_version_code or 0
+      elseif name == "bun" and cmd[2] == "build" then
+        code = opts.bun_build_code or 0
+        stderr = opts.bun_build_stderr or ""
+        stdout = opts.bun_build_stdout or ""
+        if code == 0 and not opts.bun_build_no_output then
+          write_file(cmd[6], opts.bun_build_data or "fallback-binary")
+        end
       end
       return {
         wait = function()
@@ -105,7 +128,7 @@ local function load_install(opts)
   }
 
   local install = require("interactive-graphviz.install")
-  return install, system_calls, promoted, chmodded
+  return install, system_calls, promoted, chmodded, notifications
 end
 
 local function make_root()
@@ -306,5 +329,139 @@ describe("install manifest and verification", function()
       end
     end
     assert.is_true(saw_xattr)
+  end)
+end)
+
+describe("source-build fallback for unsupported platforms", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.install"] = nil
+    _G.vim = nil
+  end)
+
+  local function fallback_opts(root, extra)
+    local opts = {
+      root = root,
+      manifest_path = root .. "/checksums.txt",
+      os_name = "Linux",
+      arch = "riscv64", -- a known-named host with no prebuilt artifact
+      getconf = "glibc 2.31",
+      executable = { curl = 1, wget = 0, xattr = 0, bun = 1 },
+    }
+    for k, v in pairs(extra or {}) do
+      opts[k] = v
+    end
+    return opts
+  end
+
+  it("builds from source and returns the compiled executable when Bun is present", function()
+    local root = make_root()
+    write_file(root .. "/checksums.txt", ("a"):rep(64) .. "  server-darwin-arm64\n")
+
+    local install, calls, promoted, _, notifications =
+      load_install(fallback_opts(root, { bun_version = "1.3.10" }))
+    local cmd = install.resolve_server_cmd()
+
+    assert.are.same({ root .. "/dist/source-build/server" }, cmd)
+    assert.are.equal(root .. "/dist/source-build/server", promoted[#promoted].dst)
+
+    local saw_build = false
+    for _, call in ipairs(calls) do
+      if call[1] == "bun" and call[2] == "build" then
+        saw_build = true
+        assert.are.equal("--compile", call[3])
+      end
+      assert.are_not.equal("curl", call[1]) -- never downloads on fallback
+    end
+    assert.is_true(saw_build)
+
+    -- Loud, explicit, platform-named notice (AC 2).
+    local saw_notice = false
+    for _, n in ipairs(notifications) do
+      if n.message:find("no prebuilt binary", 1, true) and n.message:find("Linux", 1, true) then
+        saw_notice = true
+      end
+    end
+    assert.is_true(saw_notice)
+  end)
+
+  it("fails fast naming Bun when Bun is missing (no download/compile/spawn)", function()
+    local root = make_root()
+    write_file(root .. "/checksums.txt", ("a"):rep(64) .. "  server-darwin-arm64\n")
+
+    local install, calls = load_install(fallback_opts(root, {
+      executable = { curl = 1, wget = 0, xattr = 0, bun = 0 },
+    }))
+
+    local ok, err = pcall(function()
+      install.resolve_server_cmd()
+    end)
+    assert.is_false(ok)
+    assert.is_truthy(tostring(err):find("Bun", 1, true))
+
+    for _, call in ipairs(calls) do
+      assert.are_not.equal("curl", call[1])
+      assert.is_false(call[1] == "bun" and call[2] == "build")
+    end
+  end)
+
+  it("fails fast when Bun is older than the minimum", function()
+    local root = make_root()
+    write_file(root .. "/checksums.txt", ("a"):rep(64) .. "  server-darwin-arm64\n")
+
+    local install, calls = load_install(fallback_opts(root, { bun_version = "1.2.9" }))
+
+    local ok, err = pcall(function()
+      install.resolve_server_cmd()
+    end)
+    assert.is_false(ok)
+    assert.is_truthy(tostring(err):find("1.3.10", 1, true))
+
+    for _, call in ipairs(calls) do
+      assert.is_false(call[1] == "bun" and call[2] == "build")
+    end
+  end)
+
+  it("cleans up and does not promote when the source build fails", function()
+    local root = make_root()
+    write_file(root .. "/checksums.txt", ("a"):rep(64) .. "  server-darwin-arm64\n")
+
+    local install, _, promoted = load_install(fallback_opts(root, {
+      bun_version = "1.3.10",
+      bun_build_code = 1,
+      bun_build_stderr = "compile error",
+    }))
+
+    local ok = pcall(function()
+      install.resolve_server_cmd()
+    end)
+    assert.is_false(ok)
+    assert.are.equal(0, #promoted)
+    assert.is_nil(io.open(root .. "/dist/source-build/server", "rb"))
+  end)
+
+  it("returns a compiled executable path, never a `bun run` wrapper command", function()
+    local root = make_root()
+    write_file(root .. "/checksums.txt", ("a"):rep(64) .. "  server-darwin-arm64\n")
+
+    local install = load_install(fallback_opts(root, { bun_version = "1.3.10" }))
+    local cmd = install.resolve_server_cmd()
+
+    assert.are.equal(1, #cmd)
+    assert.are_not.equal("bun", cmd[1])
+    assert.is_truthy(cmd[1]:find("source%-build"))
+  end)
+
+  it("parses and compares semver numerically", function()
+    local root = make_root()
+    write_file(root .. "/checksums.txt", ("a"):rep(64) .. "  server-darwin-arm64\n")
+    local install = load_install(fallback_opts(root, { bun_version = "1.3.10" }))
+
+    assert.are.same({ 1, 3, 10 }, install._test.parse_semver("1.3.10"))
+    assert.are.same({ 1, 3, 10 }, install._test.parse_semver("v1.3.10+build"))
+    assert.is_nil(install._test.parse_semver("not-a-version"))
+    assert.is_true(install._test.semver_at_least({ 1, 3, 10 }, { 1, 3, 10 }))
+    assert.is_true(install._test.semver_at_least({ 1, 4, 0 }, { 1, 3, 10 }))
+    assert.is_false(install._test.semver_at_least({ 1, 3, 9 }, { 1, 3, 10 }))
+    assert.is_false(install._test.semver_at_least({ 0, 9, 0 }, { 1, 3, 10 }))
   end)
 end)

@@ -1,3 +1,4 @@
+import { getHealth } from "./health";
 import { PROTOCOL_VERSION, type ProtocolMessage } from "./protocol";
 import { staticAssetRoot } from "./static";
 import { SessionRegistry, type SocketData, type Subscriber } from "./sessions";
@@ -60,13 +61,21 @@ export function main(): number {
   // the websocket handlers can validate without re-reading process state.
   const token = crypto.randomUUID();
 
+  const bindAddress = resolveBindAddress();
+
   const server = Bun.serve<SocketData, undefined>({
-    hostname: resolveBindAddress(), // NFR-4: loopback by default; 0.0.0.0 only when Lua config sets expose_to_lan=true
+    hostname: bindAddress, // NFR-4: loopback by default; 0.0.0.0 only when Lua config sets expose_to_lan=true
     port: resolvePort(), // 0 = ephemeral; the real port is read back below
     // Static frontend served through the `static.ts` HTML-bundle seam (binary-
     // friendly: same path under `bun run` and a `--compile` binary).
     routes: {
       "/": staticAssetRoot(),
+      // Observability-only JSON diagnostics (AC 8). Never writes to stdout; the
+      // protocol stdout channel is untouched. Does not affect `/` or WS upgrade.
+      "/health": (_req, srv) =>
+        Response.json(
+          getHealth({ port: srv.port ?? 0, bind: bindAddress, sessions: sessions.size }),
+        ),
     },
     fetch(req, srv) {
       // WebSocket upgrade is performed here (Bun's contract): return undefined on
