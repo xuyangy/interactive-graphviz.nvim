@@ -55,7 +55,7 @@ development_status:
   2-1-configuration-surface-via-setup: done
   2-2-layout-engine-selection-dot-neato: done
   epic-2-retrospective: optional
-  epic-3: in-progress
+  epic-3: done
   3-1-cross-compiled-release-pipeline-with-checksums: done
   3-2-prebuilt-binary-install-with-integrity-verification: done
   3-3-source-build-fallback-failure-ux-and-health-check: done
