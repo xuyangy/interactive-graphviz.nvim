@@ -72,6 +72,7 @@ jobs:
             dist/release/server-linux-arm64-musl \
             dist/release/server-darwin-x64 \
             dist/release/server-darwin-arm64 \
+            dist/release/server-windows-x64.exe \
             dist/release/checksums.txt \
             --verify-tag \
             --title "$RELEASE_TAG" \

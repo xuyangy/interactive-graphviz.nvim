@@ -19,6 +19,7 @@ describe("release target metadata", () => {
       "server-linux-arm64-musl",
       "server-darwin-x64",
       "server-darwin-arm64",
+      "server-windows-x64.exe",
     ]);
 
     expect(RELEASE_TARGETS.map((target) => target.bunTarget)).toEqual([
@@ -28,8 +29,9 @@ describe("release target metadata", () => {
       "bun-linux-arm64-musl",
       "bun-darwin-x64",
       "bun-darwin-arm64",
+      "bun-windows-x64",
     ]);
-    expect(artifactNames().some((name) => name.includes("windows"))).toBe(false);
+    expect(artifactNames().some((name) => name.includes("windows"))).toBe(true);
   });
 });
 
@@ -66,7 +68,7 @@ describe("release checksum manifest", () => {
   test("rejects missing and unexpected manifest artifacts", () => {
     const manifest = [
       `${"0".repeat(64)}  server-linux-x64`,
-      `${"1".repeat(64)}  server-windows-x64.exe`,
+      `${"1".repeat(64)}  server-freebsd-x64`,
     ].join("\n");
 
     const result = validateChecksumManifest(manifest);
@@ -88,7 +90,7 @@ describe("release workflow", () => {
     expect(workflow).toContain('gh release create "$RELEASE_TAG"');
     expect(workflow).toContain("--verify-tag");
     expect(workflow).not.toContain("--clobber");
-    expect(workflow).not.toContain("server-windows");
+    expect(workflow).toContain("server-windows-x64.exe");
 
     for (const name of artifactNames()) {
       expect(workflow).toContain(`dist/release/${name}`);

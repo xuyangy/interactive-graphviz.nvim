@@ -184,9 +184,14 @@ describe("install artifact mapping", function()
       "server-linux-arm64-musl",
       install._test.map_platform("Linux", "arm64", "musl").artifact
     )
+    assert.are.equal(
+      "server-windows-x64.exe",
+      install._test.map_platform("Windows", "AMD64").artifact
+    )
+    -- bun --compile has no windows-arm64 target: falls through to source-build.
     assert.has_error(function()
-      install._test.map_platform("Windows", "x86_64")
-    end, "interactive-graphviz: no prebuilt binary for Windows-x86_64")
+      install._test.map_platform("Windows", "ARM64")
+    end, "interactive-graphviz: no prebuilt binary for Windows-ARM64")
   end)
 end)
 

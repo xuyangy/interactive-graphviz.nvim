@@ -20,6 +20,7 @@ export const RELEASE_TARGETS: ReleaseTarget[] = [
   { artifactName: "server-linux-arm64-musl", bunTarget: "bun-linux-arm64-musl" },
   { artifactName: "server-darwin-x64", bunTarget: "bun-darwin-x64" },
   { artifactName: "server-darwin-arm64", bunTarget: "bun-darwin-arm64" },
+  { artifactName: "server-windows-x64.exe", bunTarget: "bun-windows-x64" },
 ];
 
 const PROJECT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -180,9 +181,6 @@ function assertTargetMetadata(): void {
   const names = artifactNames();
   const errors: string[] = [];
 
-  if (names.some((name) => name.includes("windows"))) {
-    errors.push("v1 release targets must not include Windows artifacts");
-  }
   if (new Set(names).size !== names.length) {
     errors.push("release artifact names must be unique");
   }

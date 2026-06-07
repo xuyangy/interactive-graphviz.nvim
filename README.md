@@ -102,8 +102,8 @@ address is controlled exclusively by `expose_to_lan` (see Security).
   before it is ever executed. Verification is fail-closed: a checksum mismatch,
   truncated download, or failed promotion means the binary is **not** run.
   Prebuilt targets: macOS `x64`/`arm64`, Linux `x64`/`arm64` (glibc **and**
-  musl).
-- **Uncovered platforms** (e.g. Windows, BSD) fall back to building the server
+  musl), and Windows `x64`.
+- **Uncovered platforms** (e.g. BSD, Windows on `arm64`) fall back to building the server
   from source with Bun (`bun build --compile`), loudly and explicitly. This
   requires Bun ≥ 1.3.10; if Bun is missing or too old, the install fails fast
   with a clear message naming Bun as the prerequisite.

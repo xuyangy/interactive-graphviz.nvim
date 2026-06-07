@@ -55,7 +55,7 @@ local function run(cmd, opts)
 end
 
 local function normalize_arch(arch)
-  arch = trim(arch)
+  arch = trim(arch):lower()
   if arch == "x86_64" or arch == "amd64" then
     return "x64"
   end
@@ -69,6 +69,12 @@ local function map_platform(os_name, arch_name, libc)
   local arch = normalize_arch(arch_name)
   if os_name == "Darwin" and arch then
     return { artifact = "server-darwin-" .. arch, platform = os_name .. "-" .. trim(arch_name) }
+  end
+
+  -- Windows ships a single x64 prebuilt (`bun --compile` has no windows-arm64
+  -- target). Windows-arm64 falls through to the source-build fallback.
+  if os_name == "Windows" and arch == "x64" then
+    return { artifact = "server-windows-x64.exe", platform = os_name .. "-" .. trim(arch_name) }
   end
 
   if os_name == "Linux" and arch then
@@ -118,6 +124,17 @@ end
 -- unknown Linux libc) still hard-fail: we cannot source-build for a host we cannot
 -- even name. Only a *known* host with no prebuilt artifact becomes fallback.
 local function detect_host()
+  -- Windows has no `uname`; identify it with Vim's own platform predicate and
+  -- read the CPU from the environment. PROCESSOR_ARCHITEW6432 is set when a 32-bit
+  -- process runs under WoW64 and reports the true (64-bit) host arch.
+  if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+    local arch_name = trim(vim.env.PROCESSOR_ARCHITEW6432 or vim.env.PROCESSOR_ARCHITECTURE or "")
+    if arch_name == "" then
+      arch_name = "AMD64"
+    end
+    return "Windows", arch_name, nil
+  end
+
   local os_result = run({ "uname", "-s" })
   if os_result.code ~= 0 or trim(os_result.stdout) == "" then
     fail("failed to detect OS with uname -s: " .. trim(os_result.stderr))
@@ -446,7 +463,7 @@ local function build_from_source(root, platform_label, os_name)
 
   local out_dir = path_join(root, FALLBACK_DIR)
   vim.fn.mkdir(out_dir, "p")
-  local final_path = path_join(out_dir, "server")
+  local final_path = path_join(out_dir, os_name == "Windows" and "server.exe" or "server")
   local tmp_path = path_join(out_dir, ".server." .. basename(vim.fn.tempname()) .. ".tmp")
   remove_file(tmp_path)
 
@@ -519,7 +536,7 @@ end
 function M.resolve_server_cmd()
   local root = plugin_root()
   local platform = resolve_platform()
-  local os_name = platform.os_name == "Darwin" and "Darwin" or nil
+  local os_name = platform.os_name
 
   -- Known host with no prebuilt artifact: source-build fallback (AC 1, 9). The
   -- supported prebuilt path below never requires Bun on a verified cache hit.
