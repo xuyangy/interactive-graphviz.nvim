@@ -4,6 +4,45 @@ local function trim(s)
   return tostring(s or ""):match("^%s*(.-)%s*$")
 end
 
+-- Split an `open_cmd` string into an argv list, honoring single/double quoted
+-- groups so multi-word arguments survive intact. A naive whitespace split breaks
+-- commands like `open -a "Google Chrome"`; this keeps the quoted token whole:
+--   open -a "Google Chrome"  ->  { "open", "-a", "Google Chrome" }
+-- Quotes are removed; adjacent quoted/unquoted runs concatenate shell-style
+-- (`--flag="a b"` -> `--flag=a b`). Returns {} for an empty/whitespace string.
+local function tokenize_cmd(s)
+  local args = {}
+  local i, n = 1, #s
+  while i <= n do
+    if s:sub(i, i):match("%s") then
+      i = i + 1
+    else
+      local buf = {}
+      while i <= n do
+        local c = s:sub(i, i)
+        if c:match("%s") then
+          break
+        elseif c == '"' or c == "'" then
+          i = i + 1
+          while i <= n and s:sub(i, i) ~= c do
+            table.insert(buf, s:sub(i, i))
+            i = i + 1
+          end
+          i = i + 1 -- skip the closing quote (no-op if unterminated at EOS)
+        else
+          table.insert(buf, c)
+          i = i + 1
+        end
+      end
+      table.insert(args, table.concat(buf))
+    end
+  end
+  return args
+end
+
+-- Test seam: exercised directly by commands_spec without a real vim.
+M._tokenize_cmd = tokenize_cmd
+
 -- Returns true if the given buffer contains DOT/Graphviz content.
 local function is_dot_buffer(bufnr)
   -- Guard against invalid buffers (e.g. after BufDelete, re-open scenarios).
@@ -31,9 +70,14 @@ function M.preview()
     return
   end
 
-  -- Idempotency guard: if session already active and server is running, just
-  -- re-send the current render without re-opening the browser.
-  if session.has(bufnr) and server.state.running then
+  -- Idempotency guard: if a session is already active for this buffer, just
+  -- re-send the current render — never re-open the browser or re-register the
+  -- live-reload watch. This fires whether the server is already `running` OR
+  -- still starting (pre-`ready`): a registered session means a browser-open is
+  -- already pending/done, so a rapid second `:GraphvizPreview` during startup
+  -- must NOT stack a second `server.on_ready(...)` callback (which would open a
+  -- second tab when `ready` arrives). server.send queues the render until ready.
+  if session.has(bufnr) then
     local dot = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
     server.send({
       type = "render",
@@ -65,6 +109,12 @@ function M.preview()
   -- Send the initial render — server.send queues until `ready`, so this is safe
   -- to call before the server has announced its port/token.
   local dot = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+  -- Immediate editor-side feedback for an empty/whitespace buffer; the frontend
+  -- also shows an in-preview notice (the canonical, all-render-paths surface).
+  -- The preview still opens and live-reloads, so typing content renders normally.
+  if trim(dot) == "" then
+    log.notify("GraphvizPreview: buffer is empty — nothing to render yet", vim.log.levels.INFO)
+  end
   server.send({
     type = "render",
     sessionId = bufnr,
@@ -90,7 +140,7 @@ function M.preview()
     log.notify("GraphvizPreview: serving at " .. url, vim.log.levels.INFO)
     local open_cmd = config.get().open_cmd
     if open_cmd then
-      local parts = vim.split(open_cmd, "%s+", { trimempty = true })
+      local parts = tokenize_cmd(open_cmd)
       table.insert(parts, url)
       vim.system(parts)
     else

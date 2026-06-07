@@ -75,6 +75,13 @@ local function build_assert()
       fail("expected truthy, got " .. tostring(v))
     end
   end
+  -- busted aliases used by the specs in this repo.
+  a.truthy = a.is_truthy
+  a.is_not_nil = function(v)
+    if v == nil then
+      fail("expected non-nil value, got nil")
+    end
+  end
   a.has_error = function(fn, expected)
     local ok, err = pcall(fn)
     if ok then

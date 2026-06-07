@@ -62,7 +62,7 @@ development_status:
   epic-3-retrospective: done
   # --- v2 (added by correct-course 2026-06-07; see sprint-change-proposal-2026-06-07.md) ---
   epic-4: in-progress
-  4-1-user-facing-hardening-pass: ready-for-dev
+  4-1-user-facing-hardening-pass: review
   epic-5: backlog
   5-1-zoom-pan-and-reset-view: backlog
   5-2-click-to-highlight-neighbors: backlog

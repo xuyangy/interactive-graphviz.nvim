@@ -95,6 +95,34 @@ export function clearError(_v: number): void {
   }
 }
 
+// ── Empty-buffer notice ───────────────────────────────────────────────────────
+// Informational (NOT an error): the DOT buffer is empty/whitespace, so there is
+// nothing to render. Non-blocking, top-left, visually distinct from the red error
+// overlay. It never touches #app, so a previously rendered good graph stays on
+// screen; on an initial empty buffer #app is empty anyway and this tells the user
+// why. Cleared as soon as a real (non-blank) render is dispatched.
+export function showEmptyNotice(v: number): void {
+  let el = document.getElementById("ig-empty-notice");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "ig-empty-notice";
+    el.style.cssText =
+      "position:fixed;top:8px;left:8px;background:rgba(40,40,40,0.85);" +
+      "color:#cccccc;padding:6px 10px;border-radius:4px;font-size:13px;" +
+      "font-family:monospace;z-index:9999;pointer-events:none;max-width:50vw;";
+    document.body.appendChild(el);
+  }
+  el.textContent = `Buffer is empty — nothing to render (v${v})`;
+}
+
+/** Remove the empty-buffer notice if present. */
+export function clearEmptyNotice(): void {
+  const el = document.getElementById("ig-empty-notice");
+  if (el) {
+    el.parentNode?.removeChild(el);
+  }
+}
+
 // ── Test seams ──────────────────────────────────────────────────────────────
 /** Returns lastGoodDot. Production code never calls this. */
 export function _lastGoodDot(): string | null {
@@ -104,6 +132,11 @@ export function _lastGoodDot(): string | null {
 /** Returns the overlay element (or null). Production code never calls this. */
 export function _overlayElement(): HTMLElement | null {
   return document.getElementById("ig-error-overlay");
+}
+
+/** Returns the empty-notice element (or null). Production code never calls this. */
+export function _emptyNoticeElement(): HTMLElement | null {
+  return document.getElementById("ig-empty-notice");
 }
 
 // ── Render queue wired to real WASM renderer + error overlay ─────────────────

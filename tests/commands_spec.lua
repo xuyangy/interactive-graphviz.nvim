@@ -446,6 +446,131 @@ describe("commands.preview", function()
   end)
 end)
 
+-- ── AC1 (Story 4.1): N-tabs idempotency in the pre-`ready` window ──────────────
+
+describe("commands.preview idempotency (pre-ready N-tabs)", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    _G.vim = nil
+  end)
+
+  it("rapid preview() before `ready` registers exactly one browser-open", function()
+    local bufnr = 30
+    local active = {}
+    -- Session registers on open_session, mirroring production (server.open_session
+    -- calls session.register synchronously) so session.has(bufnr) becomes true.
+    local session_mod = make_session({ active = active })
+    -- Server is still STARTING: state.running == false, and on_ready QUEUES the
+    -- callback (does not fire) until `ready` — the real pre-ready behavior that
+    -- the immediate-fire stub elsewhere does not exercise.
+    local server = make_server({ state = { running = false, port = nil, token = nil } })
+    server.open_session = function(b)
+      table.insert(server.open_session_calls, b)
+      active[b] = true
+      return true
+    end
+    server.on_ready = function(fn)
+      table.insert(server.on_ready_calls, fn) -- queue only; do NOT fire (pre-ready)
+    end
+
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr }),
+      server,
+      session_mod,
+      make_config(),
+      make_log()
+    )
+
+    cmd.preview() -- first: opens session, registers ONE browser-open
+    cmd.preview() -- second, still pre-ready: must NOT register another (no N-tabs)
+    cmd.preview() -- third, idempotent
+
+    assert.are.equal(1, #server.open_session_calls, "open_session only on the first call")
+    assert.are.equal(1, #server.on_ready_calls, "exactly one browser-open registered (no N-tabs)")
+    -- every call still sends a render (initial + idempotent refreshes), v increments
+    assert.are.equal(3, #server.send_calls)
+    assert.are.equal(1, server.send_calls[1].v)
+    assert.are.equal(2, server.send_calls[2].v)
+    assert.are.equal(3, server.send_calls[3].v)
+  end)
+end)
+
+-- ── AC3 (Story 4.1): open_cmd quote-aware tokenizer ───────────────────────────
+
+describe("commands open_cmd tokenizer", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    _G.vim = nil
+  end)
+
+  local function tok()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot" }),
+      make_server(),
+      make_session(),
+      make_config(),
+      make_log()
+    )
+    return cmd._tokenize_cmd
+  end
+
+  it("keeps a double-quoted multi-word argument intact", function()
+    assert.are.same({ "open", "-a", "Google Chrome" }, tok()('open -a "Google Chrome"'))
+  end)
+
+  it("keeps a single-quoted multi-word argument intact", function()
+    assert.are.same({ "open", "-a", "Google Chrome" }, tok()("open -a 'Google Chrome'"))
+  end)
+
+  it("single-word command tokenizes to one element", function()
+    assert.are.same({ "xdg-open" }, tok()("xdg-open"))
+  end)
+
+  it("collapses extra whitespace", function()
+    assert.are.same({ "a", "b" }, tok()("  a   b  "))
+  end)
+
+  it("empty/whitespace string yields no tokens", function()
+    assert.are.same({}, tok()("   "))
+  end)
+
+  it("concatenates adjacent quoted and unquoted runs shell-style", function()
+    assert.are.same({ "--flag=a b" }, tok()('--flag="a b"'))
+  end)
+
+  it("preview() passes a quoted open_cmd through correctly", function()
+    local system_calls = {}
+    local bufnr = 41
+    local server = make_server({ state = { running = true, port = 9876, token = "tok-abc" } })
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = bufnr, system_calls = system_calls }),
+      server,
+      make_session(),
+      make_config("dot", 'open -a "Google Chrome"'),
+      make_log()
+    )
+
+    cmd.preview()
+
+    assert.are.equal(1, #system_calls, "vim.system called once for the quoted open_cmd")
+    local parts = system_calls[1]
+    assert.are.equal("open", parts[1])
+    assert.are.equal("-a", parts[2])
+    assert.are.equal("Google Chrome", parts[3])
+    assert.truthy(parts[4]:find("127.0.0.1", 1, true), "URL appended as the final argument")
+  end)
+end)
+
 -- ── commands.stop ─────────────────────────────────────────────────────────────
 
 describe("commands.stop", function()

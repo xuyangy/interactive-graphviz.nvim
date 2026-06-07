@@ -46,3 +46,30 @@ jobs:
         run: bun run scripts/release.ts validate-targets
       - name: Frontend bundle smoke
         run: bun build frontend/index.html --outdir dist/frontend
+      - name: Frontend unit tests (DOT helpers)
+        run: bun test frontend/dot.test.ts
+
+  # Windows no-orphan verification (Story 4.1 AC4 / Epic-3 retro AI#2). Closes the
+  # "Windows no-orphan unverified" gap: the shipped server-windows-x64.exe prebuilt
+  # must self-terminate when the parent Neovim dies. Two layers:
+  #  - bun test (Windows Bun runtime): stdin-EOF self-termination + heartbeat backstop
+  #  - PowerShell harness: full real-nvim parent-death -> pipe-close -> reap chain
+  windows-no-orphan:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install Bun dependencies
+        run: |
+          bun install --cwd frontend --frozen-lockfile
+          bun install --cwd server --frozen-lockfile
+      - name: Server supervision tests (stdin-EOF + heartbeat on Windows Bun)
+        run: bun test server/supervisor.test.ts server/stdio.test.ts
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.10.4
+      - name: No-orphan supervision gate (NFR-3, Windows)
+        shell: pwsh
+        run: ./tests/integration/run_orphan_check.ps1
