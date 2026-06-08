@@ -13,6 +13,19 @@ import {
   type ViewState,
   type ZoomAccessor,
 } from "./viewstate";
+import {
+  Selection,
+  buildModelFromTitles,
+  computeClusterHighlightSet,
+  computeHighlightSet,
+  emptyHighlightSet,
+  getHighlightMode,
+  parseDotModel,
+  shouldClearHighlight,
+  unionHighlight,
+  type GraphModel,
+  type HighlightSet,
+} from "./interact";
 
 /**
  * Render a DOT string into #app using the bundled WASM renderer.
@@ -112,6 +125,12 @@ async function renderDotWithFallback(dot: string, engine: string): Promise<void>
   // Reapply the prior zoom/pan now that the new zoom behavior exists (AC2).
   // No-op when preserve_view=false (AC3) or when nothing was captured.
   restoreViewState(zoomAccessor(), captured);
+  // Story 5.2 AC4 — re-derive + re-apply the active highlight against the NEW
+  // SVG. This runs on the per-render SUCCESS boundary only (never inside the
+  // fallback-recovery render in onError), so it cannot introduce a second
+  // concurrent d3 DOM mutation race on #app. It also re-binds the delegated
+  // click listener (idempotent) since d3-graphviz rebuilds the #app subtree.
+  reapplyHighlightAfterRender();
 }
 
 // ── Error overlay ───────────────────────────────────────────────────────────
@@ -251,6 +270,247 @@ export function installResetKeybinding(): void {
   document.addEventListener("keydown", handleResetKeydown);
 }
 
+// ── Click-to-highlight neighbors (Story 5.2) ─────────────────────────────────
+// render.ts is the only module that touches the live SVG, so it owns the DOM
+// bridge for the pure highlight model in interact.ts (mirroring the viewstate
+// bridge). The highlight MATH and selection state machine are pure + unit-tested
+// in interact.ts; here we (1) extract the graph model from the live SVG <title>
+// elements (robust: mirrors what is actually drawn), (2) apply CSS classes for
+// Selected / Neighbor / Dimmed emphasis, and (3) wire delegated click + Esc.
+//
+// Highlight is a cheap class/opacity toggle on existing SVG groups — no
+// re-render (NFR-7). Animation/transition polish is Story 5.4's scope.
+
+// Module-level selection state machine (pure, from interact.ts).
+const _selection = new Selection();
+// The graph model used for cluster membership (only the DOT parse carries
+// cluster member sets; SVG titles do not). Re-derived from the latest applied
+// DOT on each render. Null until the first render with a DOT.
+let _clusterModel: GraphModel | null = null;
+// Whether cluster-highlight augmentation is active (AC3). Toggled by Alt+click:
+// Alt+click on a node in a cluster augments the neighbor highlight with the
+// whole cluster (members + intra-cluster edges). Documented in Dev Agent Record.
+let _clusterAugment = false;
+
+const STYLE_ID = "ig-highlight-style";
+// Injected once: the Selected / Neighbor / Dimmed emphasis treatment. Story 5.4
+// owns richer polish; here we keep instant, cheap opacity/stroke changes.
+const HIGHLIGHT_CSS = `
+#app g.node.ig-dimmed, #app g.edge.ig-dimmed { opacity: 0.15; }
+#app g.node.ig-neighbor, #app g.edge.ig-neighbor { opacity: 1; }
+/* Neighbor = emphasized but distinct from Selected (AC1): a lighter accent
+   stroke so neighbors read as positively highlighted, not merely un-dimmed,
+   while staying visually subordinate to the Selected node's bolder stroke. */
+#app g.node.ig-neighbor ellipse,
+#app g.node.ig-neighbor polygon,
+#app g.node.ig-neighbor path { stroke: #ffcc80; stroke-width: 2px; }
+#app g.node.ig-selected { opacity: 1; }
+#app g.node.ig-selected ellipse,
+#app g.node.ig-selected polygon,
+#app g.node.ig-selected path { stroke: #ff9800; stroke-width: 3px; }
+`;
+
+function ensureHighlightStyle(): void {
+  if (document.getElementById(STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = STYLE_ID;
+  style.textContent = HIGHLIGHT_CSS;
+  document.head.appendChild(style);
+}
+
+/** Read the textContent of the first <title> child of an SVG group, trimmed. */
+function groupTitle(group: Element): string {
+  // The <title> is a direct child; querySelector(":scope > title") keeps us from
+  // grabbing a descendant edge/node title in nested structures.
+  const t = group.querySelector(":scope > title") ?? group.querySelector("title");
+  return (t?.textContent ?? "").trim();
+}
+
+/**
+ * Build the pure graph model from the LIVE SVG <title> elements. Graphviz emits
+ * each node as <g class="node"><title>NAME</title>…>, each edge as
+ * <g class="edge"><title>A-&gt;B</title>…> (A--B undirected), each cluster as
+ * <g class="cluster"><title>cluster_NAME</title>…>. This is the chosen
+ * extraction source (robust, mirrors what is drawn); the math stays pure.
+ */
+function extractModelFromApp(): GraphModel {
+  const app = document.getElementById("app");
+  if (!app) return buildModelFromTitles({ nodeTitles: [], edgeTitles: [] });
+  const nodeTitles: string[] = [];
+  const edgeTitles: string[] = [];
+  const clusterTitles: string[] = [];
+  app.querySelectorAll("g.node").forEach((g) => nodeTitles.push(groupTitle(g)));
+  app.querySelectorAll("g.edge").forEach((g) => edgeTitles.push(groupTitle(g)));
+  app.querySelectorAll("g.cluster").forEach((g) => clusterTitles.push(groupTitle(g)));
+  return buildModelFromTitles({ nodeTitles, edgeTitles, clusterTitles });
+}
+
+/** Clear all highlight CSS classes from #app's node/edge groups (full opacity). */
+function clearHighlightClasses(): void {
+  const app = document.getElementById("app");
+  if (!app) return;
+  app.querySelectorAll("g.node, g.edge").forEach((g) => {
+    g.classList.remove("ig-selected", "ig-neighbor", "ig-dimmed");
+  });
+}
+
+/**
+ * Apply a computed HighlightSet onto the live SVG: selected nodes get the
+ * strongest emphasis, neighbors get the neighbor class, the connecting edges are
+ * emphasized, and everything non-matching is dimmed. An empty highlight set
+ * returns every element to full opacity (no dimming) — the cleared state.
+ */
+function applyHighlightToDom(set: HighlightSet): void {
+  const app = document.getElementById("app");
+  if (!app) return;
+  ensureHighlightStyle();
+
+  const anySelected = set.selected.size > 0;
+  app.querySelectorAll("g.node").forEach((g) => {
+    const name = groupTitle(g);
+    g.classList.remove("ig-selected", "ig-neighbor", "ig-dimmed");
+    if (!anySelected) return; // cleared state: no classes, full opacity
+    if (set.selected.has(name)) g.classList.add("ig-selected");
+    else if (set.nodes.has(name)) g.classList.add("ig-neighbor");
+    else g.classList.add("ig-dimmed");
+  });
+  app.querySelectorAll("g.edge").forEach((g) => {
+    const title = groupTitle(g);
+    g.classList.remove("ig-neighbor", "ig-dimmed");
+    if (!anySelected) return;
+    // Edge <title> text is exactly the EdgeKey form (A->B / A--B).
+    if (set.edges.has(title)) g.classList.add("ig-neighbor");
+    else g.classList.add("ig-dimmed");
+  });
+}
+
+/**
+ * Compute the highlight set for the current selection (+ optional cluster
+ * augmentation) against a freshly-extracted model, and apply it. Pure logic is
+ * delegated to interact.ts; this only orchestrates extraction → math → DOM.
+ */
+function recomputeAndApplyHighlight(): void {
+  if (_selection.isEmpty()) {
+    applyHighlightToDom(emptyHighlightSet());
+    return;
+  }
+  const model = extractModelFromApp();
+  const mode = getHighlightMode();
+  let set = computeHighlightSet(model, _selection.toArray(), mode);
+  // AC3 — cluster augmentation: include the whole cluster for any selected node
+  // that lives in a cluster (membership comes from the DOT parse model).
+  if (_clusterAugment && _clusterModel) {
+    for (const sel of _selection.toArray()) {
+      set = unionHighlight(set, computeClusterHighlightSet(_clusterModel, sel));
+    }
+  }
+  applyHighlightToDom(set);
+}
+
+/**
+ * Re-derive + re-apply the active highlight after a successful render (AC4).
+ * Selected node titles that no longer exist are pruned; if none survive the
+ * highlight clears cleanly. Also re-binds the delegated click listener since
+ * d3-graphviz rebuilds the #app subtree on every render. Never blanks #app and
+ * never touches the v-guard / render-lock (those live in render-queue.ts).
+ */
+function reapplyHighlightAfterRender(): void {
+  // Refresh the cluster model from the latest applied DOT (set by the queue
+  // wrapper before render); fall back to SVG-derived model (no cluster members).
+  if (lastGoodDot !== null) {
+    try {
+      // The DOT parse is the only source carrying cluster MEMBER sets (SVG
+      // titles only name the cluster), so cluster augmentation (AC3) uses it.
+      _clusterModel = parseDotModel(lastGoodDot);
+    } catch {
+      _clusterModel = null;
+    }
+  }
+  const model = extractModelFromApp();
+  _selection.retain(model); // prune nodes gone after live-reload
+  installInteractionHandlers(); // idempotent re-bind
+  recomputeAndApplyHighlight();
+}
+
+/**
+ * Pure predicate: does this click target a node group? Returns the node title or
+ * null (background / empty-canvas click). Walks up from the event target to the
+ * nearest g.node within #app (event delegation), so it survives re-renders.
+ */
+export function nodeTitleFromClickTarget(target: EventTarget | null): string | null {
+  let el = target as Element | null;
+  const app = document.getElementById("app");
+  while (el && el !== app && el !== document.body) {
+    if (el instanceof Element && el.classList?.contains("node") && el.tagName === "g") {
+      return groupTitle(el);
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+
+/** Handle a click on #app: node click selects/extends; background click clears. */
+export function handleAppClick(e: MouseEvent): void {
+  const title = nodeTitleFromClickTarget(e.target);
+  if (title === null || title.length === 0) {
+    // Empty-canvas / background click clears (AC2).
+    _selection.clear();
+    _clusterAugment = false;
+    recomputeAndApplyHighlight();
+    return;
+  }
+  // Alt+click augments with the node's cluster (AC3). Shift+click multi-selects.
+  _clusterAugment = e.altKey === true;
+  if (e.shiftKey) _selection.add(title);
+  else _selection.set(title);
+  recomputeAndApplyHighlight();
+}
+
+/** Handle an Esc keydown: clear highlighting (search-safe predicate). */
+export function handleHighlightKeydown(e: KeyboardEvent): boolean {
+  if (!shouldClearHighlight(e, document.activeElement?.tagName)) return false;
+  _selection.clear();
+  _clusterAugment = false;
+  recomputeAndApplyHighlight();
+  return true;
+}
+
+/**
+ * Install the click + Esc highlight wiring. Click uses a single delegated
+ * listener on #app (event delegation up to the nearest g.node) so it survives
+ * re-renders; the keydown is document-level. Idempotent — guarded so re-binding
+ * after every render (AC4) and a duplicate startup call do not stack listeners.
+ */
+let _clickBound: Element | null = null;
+let _highlightKeyInstalled = false;
+export function installInteractionHandlers(): void {
+  const app = document.getElementById("app");
+  if (app && _clickBound !== app) {
+    // #app is stable across renders (d3-graphviz rebuilds its CHILDREN, not the
+    // container), so the delegated listener normally binds once. Re-checking the
+    // identity keeps it correct if #app is ever replaced.
+    app.addEventListener("click", handleAppClick as EventListener);
+    _clickBound = app;
+  }
+  if (!_highlightKeyInstalled) {
+    _highlightKeyInstalled = true;
+    document.addEventListener("keydown", handleHighlightKeydown);
+  }
+}
+
+// ── Highlight test seams ──────────────────────────────────────────────────────
+/** Returns the current selection snapshot. Production code never calls this. */
+export function _selectionSnapshot(): string[] {
+  return _selection.toArray();
+}
+
+/** Force-clear highlight state (selection + cluster augment). Tests only. */
+export function _resetHighlightState(): void {
+  _selection.clear();
+  _clusterAugment = false;
+  _clusterModel = null;
+}
+
 // ── Render queue wired to real WASM renderer + error overlay ─────────────────
 const _queue = createRenderQueue(renderDotWithFallback, {
   onError(err: unknown, v: number) {
@@ -285,3 +545,9 @@ export const queueRender = _queue.queueRender.bind(_queue);
 // without importing viewstate.ts directly (keeps the render/view concern
 // single-sourced behind render.ts). Decision D1 Option 1: frontend-default-on.
 export { setPreserveView } from "./viewstate";
+
+// Re-export the highlight_mode setter so main.ts can resolve the mode at startup
+// without importing interact.ts directly (keeps the interaction concern
+// single-sourced behind render.ts), mirroring setPreserveView. Decision D1
+// Option 1: frontend-local, default "bidirectional" requires no call at all.
+export { setHighlightMode, getHighlightMode } from "./interact";

@@ -82,10 +82,32 @@ The preview is interactive — navigate large graphs without leaving Neovim:
 | Scroll wheel | Zoom in / out |
 | Click + drag | Pan |
 | `0` or `r` | Reset the view to fit the viewport |
+| Click a node | Highlight it and its neighbors; dim the rest |
+| Shift + click | Add another node to the highlight (multi-select) |
+| Alt + click | Also highlight the whole cluster the node lives in |
+| `Esc` / click empty canvas | Clear all highlighting |
 
 When `preserve_view = true` (the default), your current zoom/pan is kept across
 live-reload re-renders, so editing the buffer no longer snaps you back to the
 top of the graph. Set `preserve_view = false` to reset to fit on every reload.
+
+### Highlighting neighbors
+
+Click any node to trace its relationships: the clicked node and its neighbors
+are emphasized while everything else dims. Which neighbors light up follows the
+`highlight_mode`:
+
+| `highlight_mode` | Highlights |
+| --- | --- |
+| `single` | Just the clicked node (no neighbors) |
+| `upstream` | Predecessors (incoming-edge sources) + the connecting edges |
+| `downstream` | Successors (outgoing-edge targets) + the connecting edges |
+| `bidirectional` (default) | Both directions |
+
+Shift + click adds more nodes to the highlight set, Alt + click also lights up
+the whole cluster a node belongs to, and `Esc` (or a click on the empty canvas)
+clears everything back to full opacity. Highlighting survives live-reload: it is
+re-applied to the new render as long as the selected nodes still exist.
 
 ## Configuration
 

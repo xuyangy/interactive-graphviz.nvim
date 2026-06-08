@@ -5,6 +5,11 @@
 > Unmarked items remain documented debt (theoretical/style; revisit as needed).
 > See `../planning-artifacts/sprint-change-proposal-2026-06-07.md`.
 
+## Deferred from: code review of story 5-2-click-to-highlight-neighbors (2026-06-08)
+
+- `_clusterAugment` (frontend/render.ts:293) is a single module-level boolean reflecting only the most recent click's `altKey`. Alt+click a clustered node (cluster augmentation on) followed by a non-Alt Shift+click of another node resets `_clusterAugment` to false, silently dropping the first node's cluster highlight even though it stays selected. Per-selection cluster-augment tracking would be more coherent. Also: `recomputeAndApplyHighlight` looks up cluster membership by the SVG-title node name against the DOT-parsed `_clusterModel`; for node ids with escaped/quoted characters the two normalizations could diverge and miss the cluster. Minor — AC3 only requires the minimal "offers" UX, which is satisfied. [frontend/render.ts:293, 386-402]
+- The live DOM emphasis path in render.ts (~200 lines: `applyHighlightToDom`, `handleAppClick`, `nodeTitleFromClickTarget`, `extractModelFromApp`, `recomputeAndApplyHighlight`, `reapplyHighlightAfterRender`, `installInteractionHandlers`) has no automated test. This is the same project-wide limitation already recorded as "browser WASM render path untested" — the pure highlight math/selection/cluster derivation IS fully covered in interact.test.ts (33 cases). Verified manually in a browser per the Dev Agent Record. [frontend/render.ts:273-506]
+
 ## Deferred from: code review of story 4-1-user-facing-hardening-pass (2026-06-07)
 
 - Windows `curl` download robustness for the ~110MB prebuilt: the in-Lua `download_to_tmp` (`curl -fL --retry 3`) stalled intermittently on the cold `windows-latest` runner (0 bytes transferred over the connection). The CI no-orphan gate works around it by pre-staging the binary via `gh release download`, but **real Windows users still hit the curl path on install**. Harden it (e.g. `--connect-timeout`, `--speed-limit/--speed-time` so a stall triggers `--retry`, more retries) or verify a 110MB transfer succeeds reliably on a real Windows host. [lua/interactive-graphviz/install.lua download_to_tmp]

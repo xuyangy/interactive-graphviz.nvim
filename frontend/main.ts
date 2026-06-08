@@ -6,6 +6,7 @@ import {
   showEmptyNotice,
   clearEmptyNotice,
   installResetKeybinding,
+  installInteractionHandlers,
 } from "./render";
 import { isBlankDot } from "./dot";
 
@@ -14,6 +15,14 @@ import { isBlankDot } from "./dot";
 // built-in d3-zoom (enabled by default); we only add the reset affordance.
 // The keydown handler is exported from render.ts so the d3 import stays there.
 installResetKeybinding();
+
+// Story 5.2 — install click-to-highlight + Esc-to-clear once at startup. Click a
+// node to highlight its neighbors (per highlight_mode), Shift+click to multi-
+// select, Alt+click to add the node's cluster, Esc / empty-canvas click to
+// clear. The handlers are exported from render.ts so the d3 import stays there;
+// highlight_mode defaults to "bidirectional" (frontend-local, no new wire
+// surface — Decision D1), so no setHighlightMode() call is required here.
+installInteractionHandlers();
 
 // Debug stash: all inbound envelopes are kept here for inspection.
 // Intentional — reviewed and dismissed in Story 1.3 code review.
