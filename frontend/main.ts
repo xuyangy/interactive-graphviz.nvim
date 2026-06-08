@@ -7,6 +7,7 @@ import {
   clearEmptyNotice,
   installResetKeybinding,
   installInteractionHandlers,
+  installSearchHandlers,
 } from "./render";
 import { isBlankDot } from "./dot";
 
@@ -23,6 +24,16 @@ installResetKeybinding();
 // highlight_mode defaults to "bidirectional" (frontend-local, no new wire
 // surface — Decision D1), so no setHighlightMode() call is required here.
 installInteractionHandlers();
+
+// Story 5.3 — install the document-level `/`-to-open live-search keybinding once
+// at startup. Press `/` to open a compact search box; type to filter (matches
+// highlight, non-matches dim), with case-sensitive + regex toggles, a scope
+// select (nodes/edges/both), an N/total result counter, and `Esc` to close/clear.
+// Search reuses click-highlight's SVG model extraction + the shared
+// applyHighlightToDom emphasis regime; the handler is exported from render.ts so
+// the d3 import stays there. search config defaults frontend-local (Decision D1),
+// so no setSearchConfig() call is required here (zero new wire surface — AC6).
+installSearchHandlers();
 
 // Debug stash: all inbound envelopes are kept here for inspection.
 // Intentional — reviewed and dismissed in Story 1.3 code review.

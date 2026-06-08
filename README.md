@@ -85,7 +85,9 @@ The preview is interactive — navigate large graphs without leaving Neovim:
 | Click a node | Highlight it and its neighbors; dim the rest |
 | Shift + click | Add another node to the highlight (multi-select) |
 | Alt + click | Also highlight the whole cluster the node lives in |
-| `Esc` / click empty canvas | Clear all highlighting |
+| `/` | Open the live-search box (type to filter nodes / edges) |
+| `Esc` | Close search if open, otherwise clear all highlighting |
+| Click empty canvas | Clear all highlighting |
 
 When `preserve_view = true` (the default), your current zoom/pan is kept across
 live-reload re-renders, so editing the buffer no longer snaps you back to the
@@ -108,6 +110,26 @@ Shift + click adds more nodes to the highlight set, Alt + click also lights up
 the whole cluster a node belongs to, and `Esc` (or a click on the empty canvas)
 clears everything back to full opacity. Highlighting survives live-reload: it is
 re-applied to the new render as long as the selected nodes still exist.
+
+### Searching
+
+Press `/` to open a compact search box. Type a query and matching nodes/edges
+are emphasized live while non-matches dim — the same highlight/dim treatment as
+click-highlight. A result counter shows the match count as `N/total` (matches
+over the searchable elements in the active scope, e.g. `3/12`); an empty query
+or zero matches reads `0/total` and dims nothing.
+
+Toggles in the search box refine matching:
+
+| Toggle | Effect |
+| --- | --- |
+| `Aa` (case-sensitive) | Off (default) = case-insensitive substring; on = exact-case substring |
+| `.*` (regex) | Treat the query as a regular expression (an invalid pattern reads `invalid regex` and matches nothing instead of crashing) |
+| Scope (`both` / `nodes` / `edges`) | Restrict matching to nodes only, edges only, or both (default) |
+
+Press `Esc` to close the search box and clear its highlight, returning every
+element to full opacity. Search highlighting survives live-reload: while the box
+is open, the query is re-applied against each new render.
 
 ## Configuration
 
