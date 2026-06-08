@@ -6,6 +6,13 @@
 
 // eslint-disable-next-line import/no-unresolved
 import { graphviz } from "d3-graphviz";
+// d3-transition + d3-ease ship transitively inside the d3-graphviz bundle (the
+// renderer pulls them in for its own transitions). Importing them directly here
+// adds NO new top-level dependency — exactly as viewstate.ts imports d3-zoom's
+// pure `zoomTransform`. Story 5.4 uses them to build the gated render transition.
+import { transition } from "d3-transition";
+import { easeCubicInOut } from "d3-ease";
+import { animationsEnabledWith, getAnimate } from "./animate";
 import { createRenderQueue } from "./render-queue";
 import {
   captureViewState,
@@ -37,14 +44,58 @@ import {
   type SearchOpts,
 } from "./search";
 
+// ── Animation gate (Story 5.4, AC1/AC4/AC5) ──────────────────────────────────
+// render.ts is the only module that touches the live SVG + `matchMedia`, so it
+// owns the DOM-side read; the pure config gate + decision logic live in
+// animate.ts (unit-tested without a real matchMedia). animationsEnabled() is the
+// SINGLE predicate both the render path and the highlight path consult, so they
+// can never diverge: animate only when the config gate is on AND the environment
+// does not request reduced motion.
+const RENDER_TRANSITION_MS = 250; // graph re-render tween — short, never laggy
+const HIGHLIGHT_TRANSITION_MS = 150; // emphasis fade — short + interruptible (NFR-7)
+
+/** True when motion should be used right now (config gate ∧ ¬prefers-reduced-motion). */
+function animationsEnabled(): boolean {
+  let reducedMotion = false;
+  try {
+    // matchMedia is absent in non-DOM contexts; treat absence as "no preference".
+    reducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    reducedMotion = false;
+  }
+  return animationsEnabledWith(getAnimate(), reducedMotion);
+}
+
 /**
  * Render a DOT string into #app using the bundled WASM renderer.
  * No system Graphviz is required — the WASM module is bundled into this file
  * via Bun's bundler (FR-6).
  *
+ * Story 5.4 (AC1/AC3/AC5): when animation is enabled, attach a d3-graphviz
+ * transition so node/edge positions tween across renders. When disabled (config
+ * off or `prefers-reduced-motion`, or for the error-recovery render) take the
+ * EXACT current instant path — no `.transition(...)` call — so the fallback is
+ * byte-identical in end-state.
+ *
+ * `animate` defaults to the live gate; the onError recovery render forces it
+ * off (instant) so a correction never stacks a transition on an error teardown.
+ *
+ * CRITICAL (AC3 — render-lock correctness): the promise resolves on the `"end"`
+ * lifecycle event in BOTH paths. Verified against d3-graphviz 5.6.0
+ * (node_modules/d3-graphviz/src/render.js): with NO transition, `'end'` is
+ * dispatched synchronously at the tail of render (line ~397). WITH a transition,
+ * `'end'` is dispatched from the post-transition zero-duration cleanup
+ * transition's `start` handler (line ~370), i.e. AFTER `transitionEnd` (line
+ * ~364) — so `"end"` still fires LAST and the render-lock in render-queue.ts
+ * releases exactly once, after the transition completes. No need to move the
+ * resolve to `transitionEnd`; latest-wins is preserved.
+ *
  * Called by the render queue only; external callers use queueRender.
  */
-export function renderDot(dot: string, engine: string): Promise<void> {
+export function renderDot(dot: string, engine: string, animate = animationsEnabled()): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     try {
       // d3-graphviz error handling is the dedicated `.onerror()` method — NOT
@@ -52,12 +103,22 @@ export function renderDot(dot: string, engine: string): Promise<void> {
       // lifecycle types (start/layout/render/transition/end); registering an
       // "error" listener there makes d3-dispatch throw "unknown type: error"
       // synchronously, failing every render before the DOT is even parsed.
-      graphviz("#app")
-        .engine(engine)
-        .onerror((err: unknown) => {
-          console.error("interactive-graphviz: render error", err);
-          reject(err instanceof Error ? err : new Error(String(err)));
-        })
+      let gv = graphviz("#app").engine(engine);
+      if (animate) {
+        // d3-graphviz's `.transition(factory)` takes a factory returning a fresh
+        // d3 transition; positions/paths tween across the render. d3-transition +
+        // d3-ease are already in the bundle (renderer's own transition support).
+        gv = gv.transition(() =>
+          transition("ig-render").duration(RENDER_TRANSITION_MS).ease(easeCubicInOut),
+        );
+      }
+      gv.onerror((err: unknown) => {
+        console.error("interactive-graphviz: render error", err);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      })
+        // Resolve on "end" — fires LAST in both the instant and transitioned
+        // paths (verified above), so the render-lock releases exactly once after
+        // any transition settles. Do NOT weaken this (AC3).
         .on("end", () => resolve())
         .renderDot(dot);
     } catch (err) {
@@ -303,9 +364,22 @@ let _clusterModel: GraphModel | null = null;
 let _clusterAugment = false;
 
 const STYLE_ID = "ig-highlight-style";
-// Injected once: the Selected / Neighbor / Dimmed emphasis treatment. Story 5.4
-// owns richer polish; here we keep instant, cheap opacity/stroke changes.
-const HIGHLIGHT_CSS = `
+// The Selected / Neighbor / Dimmed emphasis treatment. Story 5.4 (AC2/AC5)
+// animates the emphasis change by adding a CSS `transition` on the base
+// `#app g.node` / `#app g.edge` opacity + stroke properties, so toggling the
+// `ig-*` classes (in applyHighlightToDom — UNCHANGED) tweens rather than snaps.
+// This is the simplest, GPU-cheap, interruptible approach (no d3 transition for
+// class toggles — NFR-7). It is presentation-only: WHICH classes are set never
+// changes, only how the change is shown. The transition line is gated: when
+// animation is disabled (config off OR reduced-motion) it is omitted so emphasis
+// is instant, byte-identical to today's behavior.
+const HIGHLIGHT_TRANSITION_CSS = `
+#app g.node, #app g.edge,
+#app g.node ellipse, #app g.node polygon, #app g.node path {
+  transition: opacity ${HIGHLIGHT_TRANSITION_MS}ms, stroke ${HIGHLIGHT_TRANSITION_MS}ms, stroke-width ${HIGHLIGHT_TRANSITION_MS}ms;
+}
+`;
+const HIGHLIGHT_BASE_CSS = `
 #app g.node.ig-dimmed, #app g.edge.ig-dimmed { opacity: 0.15; }
 #app g.node.ig-neighbor, #app g.edge.ig-neighbor { opacity: 1; }
 /* Neighbor = emphasized but distinct from Selected (AC1): a lighter accent
@@ -320,11 +394,26 @@ const HIGHLIGHT_CSS = `
 #app g.node.ig-selected path { stroke: #ff9800; stroke-width: 3px; }
 `;
 
+/** The full highlight stylesheet text for the current animation gate. */
+function highlightCss(): string {
+  // When animation is enabled, prepend the transition rule so class toggles
+  // tween; when disabled, omit it entirely so emphasis is instant (AC5 fallback).
+  return (animationsEnabled() ? HIGHLIGHT_TRANSITION_CSS : "") + HIGHLIGHT_BASE_CSS;
+}
+
 function ensureHighlightStyle(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement("style");
+  let style = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+  const css = highlightCss();
+  if (style) {
+    // Re-evaluate the gate each call: the effective animate decision can change
+    // at runtime (setAnimate / a reduced-motion toggle), so keep the injected
+    // transition rule in sync without re-creating the element.
+    if (style.textContent !== css) style.textContent = css;
+    return;
+  }
+  style = document.createElement("style");
   style.id = STYLE_ID;
-  style.textContent = HIGHLIGHT_CSS;
+  style.textContent = css;
   document.head.appendChild(style);
 }
 
@@ -794,7 +883,10 @@ const _queue = createRenderQueue(renderDotWithFallback, {
       const dot = lastGoodDot;
       const engine = lastGoodEngine;
       setTimeout(() => {
-        renderDot(dot, engine).catch((fallbackErr: unknown) => {
+        // Story 5.4 (Task 2): the recovery render is INSTANT (animate=false) —
+        // it is a correction, not a user-driven re-render, so we never stack a
+        // transition on top of the error teardown / concurrent d3 DOM mutation.
+        renderDot(dot, engine, false).catch((fallbackErr: unknown) => {
           console.warn("interactive-graphviz: fallback render failed", fallbackErr);
         });
       }, 0);
@@ -828,3 +920,10 @@ export { setHighlightMode, getHighlightMode } from "./interact";
 // Decision D1: frontend-local, default (both / case-insensitive / no-regex)
 // requires no call at all — zero new wire surface (AC6).
 export { setSearchConfig } from "./search";
+
+// Re-export the animate setter/getter so main.ts can resolve the animation gate
+// at startup without importing animate.ts directly (keeps the render/motion
+// concern single-sourced behind render.ts), mirroring setPreserveView /
+// setHighlightMode / setSearchConfig. Decision D1: frontend-local, default ON —
+// zero-config requires NO call at all, so main.ts needs no change (AC4).
+export { setAnimate, getAnimate } from "./animate";

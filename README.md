@@ -131,6 +131,20 @@ Press `Esc` to close the search box and clear its highlight, returning every
 element to full opacity. Search highlighting survives live-reload: while the box
 is open, the query is re-applied against each new render.
 
+### Animation
+
+Re-renders and highlight changes animate by default for legibility: when the
+graph re-renders on live-reload, node and edge positions tween rather than snap,
+and when the highlight set changes (click, search, clear) the emphasis fades in
+and out. Animation never blocks interaction — the latest render always wins and
+transitions stay short and interruptible.
+
+Animation honors your system's reduced-motion preference: if your OS requests
+`prefers-reduced-motion: reduce`, transitions are skipped and changes apply
+instantly. The behavior is resolved in the browser preview itself (no Neovim
+config key, no extra install prerequisites); the non-animated instant path is the
+exact same end result, just without the tween.
+
 ## Configuration
 
 Defaults shown; pass any subset to `setup{}`:

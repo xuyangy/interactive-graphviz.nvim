@@ -5,6 +5,10 @@
 > Unmarked items remain documented debt (theoretical/style; revisit as needed).
 > See `../planning-artifacts/sprint-change-proposal-2026-06-07.md`.
 
+## Deferred from: code review of story 5-4-animated-transitions-and-polish (2026-06-08)
+
+- `d3-transition` and `d3-ease` are imported directly at the top of `frontend/render.ts` but are not declared in `frontend/package.json` — they resolve only as transitive dependencies of `d3-graphviz` 5.6.0. The build bundles them today (183 modules, verified) so AC4's "no new dependency" holds, but the import would break silently if d3-graphviz ever drops them. This mirrors the pre-existing convention established in Story 5.1 (`viewstate.ts` imports `d3-zoom`'s `zoomTransform` the same undeclared way), so it is documented debt, not a regression from this story. Consider declaring the d3 sub-packages this codebase imports directly (`d3-zoom`, `d3-transition`, `d3-ease`) as explicit `frontend/package.json` deps pinned to d3-graphviz's versions. [frontend/render.ts:13-14, frontend/package.json]
+
 ## Deferred from: code review of story 5-2-click-to-highlight-neighbors (2026-06-08)
 
 - `_clusterAugment` (frontend/render.ts:293) is a single module-level boolean reflecting only the most recent click's `altKey`. Alt+click a clustered node (cluster augmentation on) followed by a non-Alt Shift+click of another node resets `_clusterAugment` to false, silently dropping the first node's cluster highlight even though it stays selected. Per-selection cluster-augment tracking would be more coherent. Also: `recomputeAndApplyHighlight` looks up cluster membership by the SVG-title node name against the DOT-parsed `_clusterModel`; for node ids with escaped/quoted characters the two normalizations could diverge and miss the cluster. Minor — AC3 only requires the minimal "offers" UX, which is satisfied. [frontend/render.ts:293, 386-402]
