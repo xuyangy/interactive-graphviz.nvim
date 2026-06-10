@@ -59,6 +59,9 @@ local function load_install(opts)
       glob = function(_)
         return opts.glob or ""
       end,
+      has = function(feature)
+        return opts.has and opts.has[feature] or 0
+      end,
       filereadable = function(path)
         local f = io.open(path, "rb")
         if f then

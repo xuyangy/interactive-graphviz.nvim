@@ -6,7 +6,10 @@
       "name": "interactive-graphviz-frontend",
       "dependencies": {
         "@hpcc-js/wasm-graphviz": "1.21.2",
+        "d3-ease": "3.0.1",
         "d3-graphviz": "5.6.0",
+        "d3-transition": "3.0.1",
+        "d3-zoom": "3.0.0",
       },
     },
   },

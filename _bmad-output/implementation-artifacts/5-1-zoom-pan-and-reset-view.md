@@ -4,7 +4,7 @@ baseline_commit: beecf09b704934b8cd1498e64528b297e4c27b36
 
 # Story 5.1: Zoom/pan and reset view
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

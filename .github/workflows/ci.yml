@@ -32,8 +32,8 @@ jobs:
           args: --check .
       - name: Lua smoke
         run: nvim --headless -i NONE -u tests/minimal_init.lua -l tests/nvim_smoke.lua -c qa
-      - name: Busted smoke
-        run: busted tests/scaffold_spec.lua tests/session_spec.lua tests/commands_spec.lua tests/render_spec.lua
+      - name: Busted unit specs (all tests/*_spec.lua; integration gated separately)
+        run: busted tests/*_spec.lua
       - name: No-orphan supervision gate (NFR-3)
         run: busted tests/integration/orphan_spec.lua
       - name: Bun tests
