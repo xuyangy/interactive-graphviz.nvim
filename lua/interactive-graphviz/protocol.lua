@@ -16,6 +16,8 @@ M.MESSAGE_TYPES = {
   "session_closed",
   "hello",
   "ack",
+  "node_click",
+  "emphasize",
 }
 
 return M

@@ -40,6 +40,37 @@ async function readFirstLine(stream: ReadableStream<Uint8Array>, timeoutMs: numb
   throw new Error("no line received before timeout");
 }
 
+// Continuing stdout line reader: keeps one reader open on the child's stdout and
+// surfaces NDJSON lines AFTER the `ready` line that spawnServer already consumed.
+// Needed to observe the browser->server->Lua return channel (frames the server
+// writes to stdout in response to inbound WS messages, e.g. a relayed node_click).
+// spawnServer's readFirstLine calls reader.releaseLock() (not cancel) and nothing
+// else is written to stdout at startup, so a fresh getReader() here loses nothing.
+function makeStdoutLineStream(stream: ReadableStream<Uint8Array>): Record<string, unknown>[] {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const lines: Record<string, unknown>[] = [];
+  void (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (line.trim()) lines.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      }
+    } catch {
+      // stream closed on proc.kill(); the test is already finishing.
+    }
+  })();
+  return lines;
+}
+
 // Open a WS, collecting every inbound frame (parsed) into `received`.
 async function openSocket(port: number): Promise<{ ws: WebSocket; received: Record<string, unknown>[] }> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
@@ -300,6 +331,227 @@ describe("message protocol + WebSocket relay", () => {
       expect(a.received.length).toBe(1);
       expect((a.received[0] as { dot: string }).dot).toBe("NEW");
       a.ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  // --- Story 6.1: return-channel protocol spine (node_click + emphasize) ---
+
+  test("contract round-trip: node_click WS -> server -> Lua stdout envelope is structurally identical", async () => {
+    const { proc, ready } = await spawnServer();
+    const luaInbox = makeStdoutLineStream(proc.stdout!); // frames the server emits to Lua
+    try {
+      const { ws } = await openSocket(ready.port);
+      ws.send(JSON.stringify({ type: "hello", sessionId: 3, token: ready.token }));
+      await sleep(100);
+
+      // The exact envelope the browser emits on a node click (Story 6.2 sends it
+      // for real). camelCase fields, snake_case type, NO `v` (render-only token).
+      const sent = { type: "node_click", sessionId: 3, nodeId: "n1" };
+      ws.send(JSON.stringify(sent));
+      await sleep(250);
+
+      // Exactly one frame crossed to the Lua channel for this session.
+      expect(luaInbox.length).toBe(1);
+      const got = luaInbox[0]!;
+      // Relayed verbatim — byte-shape preserved on the WS->stdout hop; no re-wrap.
+      expect(JSON.stringify(got)).toBe(JSON.stringify(sent));
+      expect(got.type).toBe("node_click");
+      expect(Object.keys(got).sort()).toEqual(["nodeId", "sessionId", "type"]);
+      expect(got).not.toHaveProperty("data"); // no {data:…} wrapping
+      expect(got).not.toHaveProperty("v"); // sync messages never carry `v`
+      ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("contract round-trip: emphasize Lua stdin -> server -> WS envelope is structurally identical", async () => {
+    const { proc, ready } = await spawnServer();
+    try {
+      const { ws, received } = await openSocket(ready.port);
+      ws.send(JSON.stringify({ type: "hello", sessionId: 4, token: ready.token }));
+      await sleep(100);
+
+      // Lua emits emphasize to highlight a node in the browser. NO `v`.
+      const sent = { type: "emphasize", sessionId: 4, nodeId: "n1" };
+      writeLine(proc, sent);
+      await sleep(250);
+
+      expect(received.length).toBe(1);
+      const got = received[0]!;
+      // One identical envelope shape on the stdin->WS hop — byte-shape preserved.
+      expect(JSON.stringify(got)).toBe(JSON.stringify(sent));
+      expect(got.type).toBe("emphasize");
+      expect(Object.keys(got).sort()).toEqual(["nodeId", "sessionId", "type"]);
+      expect(got).not.toHaveProperty("v");
+      ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("emphasize with nodeId:null (clear) relays the explicit null verbatim", async () => {
+    const { proc, ready } = await spawnServer();
+    try {
+      const { ws, received } = await openSocket(ready.port);
+      ws.send(JSON.stringify({ type: "hello", sessionId: 4, token: ready.token }));
+      await sleep(100);
+
+      // `null` is the one sanctioned wire-null: it is a VALUE (clear emphasis), not
+      // an absent field, so it must survive the hop. The render contract's per-key
+      // not.toBeNull() guard deliberately does NOT apply here.
+      const sent = { type: "emphasize", sessionId: 4, nodeId: null };
+      writeLine(proc, sent);
+      await sleep(250);
+
+      expect(received.length).toBe(1);
+      const got = received[0]!;
+      expect(JSON.stringify(got)).toBe(JSON.stringify(sent));
+      expect(got.nodeId).toBeNull();
+      ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("emphasize with malformed/non-contract payloads is not relayed", async () => {
+    const { proc, ready } = await spawnServer();
+    try {
+      const { ws, received } = await openSocket(ready.port);
+      ws.send(JSON.stringify({ type: "hello", sessionId: 4, token: ready.token }));
+      await sleep(100);
+
+      writeLine(proc, { type: "emphasize", sessionId: 4 });
+      writeLine(proc, { type: "emphasize", sessionId: 4, nodeId: ["n1"] });
+      writeLine(proc, { type: "emphasize", sessionId: 4, nodeId: "n1", v: 99 });
+      writeLine(proc, { type: "emphasize", sessionId: 4, nodeId: "n1", data: {} });
+      await sleep(250);
+
+      expect(received.length).toBe(0);
+
+      const valid = { type: "emphasize", sessionId: 4, nodeId: "ok" };
+      writeLine(proc, valid);
+      await sleep(250);
+      expect(received.length).toBe(1);
+      expect(JSON.stringify(received[0])).toBe(JSON.stringify(valid));
+      ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("rejection: node_click from an un-subscribed/invalid socket is NOT relayed to Lua", async () => {
+    const { proc, ready } = await spawnServer();
+    const luaInbox = makeStdoutLineStream(proc.stdout!);
+    try {
+      // (a) never sent a valid hello — socket is open but UN-subscribed.
+      const unsub = await openSocket(ready.port);
+      unsub.ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: "x" }));
+      await sleep(200);
+      expect(luaInbox.length).toBe(0); // un-subscribed click never crosses to Lua
+
+      // (b) hello rejected for a bad token -> socket closed -> still no relay.
+      const bad = await openSocket(ready.port);
+      let closed = false;
+      bad.ws.addEventListener("close", () => {
+        closed = true;
+      });
+      bad.ws.send(JSON.stringify({ type: "hello", sessionId: 3, token: "not-the-token" }));
+      await sleep(200);
+      expect(closed).toBe(true);
+      try {
+        bad.ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: "y" }));
+      } catch {
+        // socket already closed — expected
+      }
+      await sleep(200);
+      expect(luaInbox.length).toBe(0);
+
+      // Control: a properly-subscribed socket's node_click DOES relay exactly once,
+      // proving the zeros above are real rejection, not a dead return channel.
+      const good = await openSocket(ready.port);
+      good.ws.send(JSON.stringify({ type: "hello", sessionId: 3, token: ready.token }));
+      await sleep(120);
+      good.ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: "z" }));
+      await sleep(200);
+      expect(luaInbox.length).toBe(1);
+      expect(luaInbox[0]).toMatchObject({ type: "node_click", nodeId: "z", sessionId: 3 });
+
+      unsub.ws.close();
+      good.ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("node_click with malformed/non-contract payloads is not relayed to Lua", async () => {
+    const { proc, ready } = await spawnServer();
+    const luaInbox = makeStdoutLineStream(proc.stdout!);
+    try {
+      const { ws } = await openSocket(ready.port);
+      ws.send(JSON.stringify({ type: "hello", sessionId: 3, token: ready.token }));
+      await sleep(120);
+
+      ws.send(JSON.stringify({ type: "node_click", sessionId: 3 }));
+      ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: null }));
+      ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: ["n1"] }));
+      ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: "n1", v: 99 }));
+      ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: "n1", data: {} }));
+      await sleep(250);
+      expect(luaInbox.length).toBe(0);
+
+      const valid = { type: "node_click", sessionId: 3, nodeId: "ok" };
+      ws.send(JSON.stringify(valid));
+      await sleep(250);
+      expect(luaInbox.length).toBe(1);
+      expect(JSON.stringify(luaInbox[0])).toBe(JSON.stringify(valid));
+      ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("node_click with a sessionId other than the socket's bound session is NOT relayed", async () => {
+    const { proc, ready } = await spawnServer();
+    const luaInbox = makeStdoutLineStream(proc.stdout!);
+    try {
+      const a = await openSocket(ready.port);
+      a.ws.send(JSON.stringify({ type: "hello", sessionId: 1, token: ready.token }));
+      await sleep(120);
+
+      // Subscribed to session 1, but tries to inject into session 2 — rejected.
+      a.ws.send(JSON.stringify({ type: "node_click", sessionId: 2, nodeId: "x" }));
+      await sleep(200);
+      expect(luaInbox.length).toBe(0); // no cross-session injection
+
+      // Its own bound session still relays.
+      a.ws.send(JSON.stringify({ type: "node_click", sessionId: 1, nodeId: "ok" }));
+      await sleep(200);
+      expect(luaInbox.length).toBe(1);
+      expect(luaInbox[0]).toMatchObject({ sessionId: 1, nodeId: "ok" });
+      a.ws.close();
+    } finally {
+      proc.kill();
+    }
+  }, 20000);
+
+  test("node_click for a closed session is not relayed from a stale subscribed socket", async () => {
+    const { proc, ready } = await spawnServer();
+    const luaInbox = makeStdoutLineStream(proc.stdout!);
+    try {
+      const { ws } = await openSocket(ready.port);
+      ws.send(JSON.stringify({ type: "hello", sessionId: 6, token: ready.token }));
+      await sleep(120);
+
+      writeLine(proc, { type: "session_close", sessionId: 6 });
+      await sleep(120);
+
+      ws.send(JSON.stringify({ type: "node_click", sessionId: 6, nodeId: "stale" }));
+      await sleep(250);
+      expect(luaInbox.length).toBe(0);
+      ws.close();
     } finally {
       proc.kill();
     }

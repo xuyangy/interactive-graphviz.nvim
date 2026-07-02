@@ -91,6 +91,9 @@ local function dispatch(msg)
     local level = string.lower(tostring(msg.level or "info"))
     local fn = log[level] or log.info
     fn(tostring(msg.message or ""))
+  elseif t == "node_click" then
+    -- Story 6.1: spine only — log-and-ignore. The cursor jump is Story 6.2.
+    log.debug("node_click received (no-op): " .. tostring(msg.nodeId))
   end
   -- unknown server->Lua types are ignored (channel stays warm without v1 surface)
 end

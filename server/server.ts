@@ -43,6 +43,12 @@ function writeStdout(message: ProtocolMessage): void {
   process.stdout.write(encodeLine(message));
 }
 
+function hasExactlyKeys(message: ProtocolMessage, keys: string[]): boolean {
+  const actual = Object.keys(message).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, i) => key === expected[i]);
+}
+
 // Guarded send so one dead socket can't throw across a broadcast loop.
 function safeSend(ws: Subscriber, payload: string): void {
   try {
@@ -156,6 +162,32 @@ export function main(): number {
         // Warm-channel liveness only — no v1 feature behavior beyond keeping the
         // channel alive. (Story 1.5 owns real `v` semantics.)
         break;
+      case "node_click": {
+        // Story 6.1: activate the return channel. Only a subscribed, token-validated
+        // socket may originate inbound events — `ws.data.subscribed` flips true only
+        // after a valid `hello` (token + numeric sessionId).
+        if (!ws.data.subscribed || typeof ws.data.sessionId !== "number") {
+          diag("node_click from un-subscribed socket ignored");
+          break;
+        }
+        // No cross-session injection: the frame's sessionId must be the socket's
+        // bound session. Then relay VERBATIM to Lua over stdout (byte-shape
+        // preserved; no `v` minted). The Lua handler logs-and-ignores in 6.1.
+        if (msg.sessionId !== ws.data.sessionId) {
+          diag("node_click sessionId mismatch ignored");
+          break;
+        }
+        if (!sessions.has(ws.data.sessionId)) {
+          diag("node_click for closed session ignored");
+          break;
+        }
+        if (!hasExactlyKeys(msg, ["type", "sessionId", "nodeId"]) || typeof msg.nodeId !== "string") {
+          diag("node_click malformed payload ignored");
+          break;
+        }
+        writeStdout(msg);
+        break;
+      }
       default:
         // Any other/unrecognized inbound type: log + ignore (channel stays warm
         // without growing v1 surface). Never throws across the connection.
@@ -226,6 +258,26 @@ export function main(): number {
       case "ping":
         writeStdout({ type: "pong" });
         break;
+      case "emphasize": {
+        // Story 6.1: forward-relay a transient highlight to exactly this session's
+        // subscribers (like `render`, but NOT stored as lastGoodRender — emphasize
+        // is transient, not a replayable render). `subscribersOf` is structurally
+        // single-session, so this never crosses sessions. No `v` minted/carried.
+        if (typeof message.sessionId === "number") {
+          if (
+            !hasExactlyKeys(message, ["type", "sessionId", "nodeId"]) ||
+            !(typeof message.nodeId === "string" || message.nodeId === null)
+          ) {
+            diag("emphasize malformed payload ignored");
+            break;
+          }
+          const payload = JSON.stringify(message); // one JSON object per WS frame
+          for (const ws of sessions.subscribersOf(message.sessionId)) {
+            safeSend(ws, payload);
+          }
+        }
+        break;
+      }
       case "shutdown":
         shutdown(0);
         break;

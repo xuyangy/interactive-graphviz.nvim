@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-06-02T19:07:07+0200
-last_updated: 2026-06-09T00:00:00+0200
+last_updated: 2026-06-23T20:22:39+0200
 project: interactive-graphviz.nvim
 project_key: NOKEY
 tracking_system: file-system
@@ -69,3 +69,9 @@ development_status:
   5-2-click-to-highlight-neighbors: done
   5-3-live-search: done
   5-4-animated-transitions-and-polish: done
+  # --- v3 (added by correct-course 2026-06-11; see sprint-change-proposal-2026-06-11.md) ---
+  epic-6: in-progress
+  6-1-activate-the-return-channel-protocol-spine: done
+  6-2-click-node-jump-to-source-line: ready-for-dev
+  6-3-cursor-graph-emphasis: backlog
+  6-4-sync-config-hardening-and-docs: backlog
