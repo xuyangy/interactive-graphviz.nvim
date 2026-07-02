@@ -8,6 +8,38 @@
 > **Triage (correct-course 2026-06-11):** `→ Story 6.1` / `→ Story 6.4` = pulled into Epic 6
 > (v3 bidirectional sync). See `../planning-artifacts/sprint-change-proposal-2026-06-11.md`.
 
+## Deferred from: code review of 6-3-cursor-graph-emphasis (2026-07-02)
+
+- `suppress_next` (echo suppression) is a single module-global, not per-buffer: a click-jump with no
+  cursor watcher running (`jump_on_click=true`, `highlight_on_cursor=false`) arms a flag nothing
+  consumes until a future watcher's first move; with two watched buffers the wrong buffer can consume
+  it (one echo passes, one legit emphasis tick swallowed). Spec-sanctioned one-tick degradation
+  (Task 4 locked module-level, no TTL) — key by bufnr during hardening.
+  [lua/interactive-graphviz/sync.lua:295] **→ Story 6.4**
+- A running cursor watcher never re-reads `highlight_on_cursor` — a mid-session
+  `setup({sync={highlight_on_cursor=false}})` keeps emitting `emphasize` frames until re-preview or
+  stop (delay changes DO apply; the boolean gate lives only at preview-start,
+  commands.lua:154). Add an emission-time config check.
+  [lua/interactive-graphviz/sync.lua:402] **→ Story 6.4**
+- Browser reload/reconnect and fresh preview open can lose the resting cursor emphasis:
+  `last_sent` dedupe suppresses re-emit while the cursor rests on the same node, and the server
+  intentionally never replays `emphasize` (transient, not lastGoodRender). On a fresh preview, the
+  watch-start reconciliation frame can also be sent before a browser subscribes, so it is dropped.
+  The node stays un-emphasized until the cursor moves to a DIFFERENT node. Dedupe is a locked design
+  decision; a fix needs Lua-side reconnect/subscriber awareness (e.g. reset `last_sent[bufnr]` on a
+  session (re)subscribe signal), not a fixed startup delay.
+  [lua/interactive-graphviz/sync.lua:430]
+- `emit_for_cursor` runs via `vim.schedule` outside the CursorMoved callback's pcall — internals are
+  individually guarded so no realistic throw path exists, but the warn-and-continue guard is not
+  where the comments imply; wrap the scheduled call for symmetry.
+  [lua/interactive-graphviz/sync.lua:466] **→ Story 6.4**
+- Pre-existing (Epic 1): `render.stop_all` misses watchers whose debounce timer already fired —
+  `debounce` nils `timers[bufnr]` on fire (render.lua:48-49) and `stop_all` walks `timers`
+  (render.lua:88), so steady-state buffers keep their augroup through graceful teardown. Sync's
+  `stop_all` mirrored this shape and is being fixed against `last_sent`; render needs a
+  watched-buffers registry to do the same. Benign at the sole VimLeavePre call site.
+  [lua/interactive-graphviz/render.lua:88]
+
 ## Deferred from: code review of 6-2-click-node-jump-to-source-line (2026-07-02)
 
 - Concatenated quoted IDs (`"a" + "b"` = node `ab`) and backslash-line-continued strings are never

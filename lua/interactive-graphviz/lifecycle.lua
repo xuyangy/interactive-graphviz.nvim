@@ -30,6 +30,13 @@ function M.setup()
       if not ok1 then
         log.warn("BufDelete: stop_watch: " .. tostring(err1))
       end
+      -- Story 6.3: the cursor-sync watcher mirrors the render watch lifecycle.
+      local ok_sync, err_sync = pcall(function()
+        require("interactive-graphviz.sync").stop_cursor_watch(bufnr)
+      end)
+      if not ok_sync then
+        log.warn("BufDelete: stop_cursor_watch: " .. tostring(err_sync))
+      end
       local ok2, err2 = pcall(server.close_session, bufnr)
       if not ok2 then
         log.warn("BufDelete: close_session: " .. tostring(err2))
@@ -58,6 +65,16 @@ function M.teardown()
     if not ok then
       pcall(function()
         require("interactive-graphviz.log").warn("teardown: stop_all error: " .. tostring(err))
+      end)
+    end
+  end
+  -- Story 6.3: same discipline for the cursor-sync debounce timers.
+  local sync_ok, sync_mod = pcall(require, "interactive-graphviz.sync")
+  if sync_ok then
+    local ok, err = pcall(sync_mod.stop_all)
+    if not ok then
+      pcall(function()
+        require("interactive-graphviz.log").warn("teardown: sync stop_all error: " .. tostring(err))
       end)
     end
   end

@@ -97,6 +97,30 @@ local function is_dot_buffer(bufnr)
   return name:match("%.dot$") ~= nil or name:match("%.gv$") ~= nil
 end
 
+local function reconcile_cursor_watch(bufnr, sync_cfg, log)
+  local ok_mod, sync = pcall(require, "interactive-graphviz.sync")
+  if not ok_mod then
+    log.warn("GraphvizPreview: failed to load cursor-sync module: " .. tostring(sync))
+    return
+  end
+  local enabled = sync_cfg and sync_cfg.highlight_on_cursor == true
+
+  -- Always clear a stale watcher first. This keeps repeated :GraphvizPreview
+  -- calls aligned with the current config, including true->false toggles.
+  local ok_stop, stop_err = pcall(sync.stop_cursor_watch, bufnr)
+  if not ok_stop then
+    log.warn("GraphvizPreview: failed to stop cursor-sync autocmd: " .. tostring(stop_err))
+  end
+  if not enabled then
+    return
+  end
+
+  local ok_sync, sync_err = pcall(sync.start_cursor_watch, bufnr)
+  if not ok_sync then
+    log.warn("GraphvizPreview: failed to register cursor-sync autocmd: " .. tostring(sync_err))
+  end
+end
+
 function M.preview()
   local server = require("interactive-graphviz.server")
   local session = require("interactive-graphviz.session")
@@ -121,11 +145,13 @@ function M.preview()
   -- crash falls through to the re-spawn path below rather than silently no-op'ing.
   if session.has(bufnr) and server.is_running() then
     local dot = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+    local cfg = config.get()
+    reconcile_cursor_watch(bufnr, cfg.sync, log)
     server.send({
       type = "render",
       sessionId = bufnr,
       v = session.next_version(bufnr),
-      engine = config.get().engine,
+      engine = cfg.engine,
       dot = dot,
     })
     return
@@ -148,6 +174,12 @@ function M.preview()
     log.warn("GraphvizPreview: failed to register live-reload autocmd: " .. tostring(watch_err))
   end
 
+  -- Story 6.3: buffer→graph cursor emphasis, gated Lua-side at emission — the
+  -- browser is a passive receiver, so no URL param rides along. Reconcile every
+  -- preview call so config toggles and stale watchers cannot drift.
+  local cfg = config.get()
+  reconcile_cursor_watch(bufnr, cfg.sync, log)
+
   -- Send the initial render — server.send queues until `ready`, so this is safe
   -- to call before the server has announced its port/token.
   local dot = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
@@ -161,7 +193,7 @@ function M.preview()
     type = "render",
     sessionId = bufnr,
     v = session.next_version(bufnr),
-    engine = config.get().engine,
+    engine = cfg.engine,
     dot = dot,
   })
 
@@ -204,6 +236,15 @@ function M.stop()
   local ok1, err1 = pcall(render.stop_watch, bufnr)
   if not ok1 then
     log.warn("GraphvizPreviewStop: stop_watch error: " .. tostring(err1))
+  end
+
+  -- Story 6.3: tear down the cursor watcher unconditionally — cheap no-op when
+  -- the gate was off, correct when config changed between preview and stop.
+  local ok_sync, err_sync = pcall(function()
+    require("interactive-graphviz.sync").stop_cursor_watch(bufnr)
+  end)
+  if not ok_sync then
+    log.warn("GraphvizPreviewStop: stop_cursor_watch error: " .. tostring(err_sync))
   end
 
   -- close_session internally calls session.unregister(bufnr) AND sends session_close.

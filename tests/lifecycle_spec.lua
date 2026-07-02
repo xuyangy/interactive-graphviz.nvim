@@ -106,14 +106,29 @@ local function make_log_stub()
   }
 end
 
+-- Story 6.3: the cursor-sync watcher mirrors the render watch lifecycle.
+local function make_sync_stub()
+  local calls = {}
+  return {
+    stop_cursor_watch = function(bufnr)
+      table.insert(calls, { fn = "stop_cursor_watch", bufnr = bufnr })
+    end,
+    stop_all = function()
+      table.insert(calls, "stop_all")
+    end,
+    _calls = calls,
+  }
+end
+
 -- Load lifecycle module fresh with injected stubs.
-local function load_lifecycle(vim_stub, render_stub, server_stub, session_stub, log_stub)
+local function load_lifecycle(vim_stub, render_stub, server_stub, session_stub, log_stub, sync_stub)
   _G.vim = vim_stub
 
   package.loaded["interactive-graphviz.render"] = render_stub
   package.loaded["interactive-graphviz.server"] = server_stub
   package.loaded["interactive-graphviz.session"] = session_stub
   package.loaded["interactive-graphviz.log"] = log_stub
+  package.loaded["interactive-graphviz.sync"] = sync_stub or make_sync_stub()
   package.loaded["interactive-graphviz.lifecycle"] = nil -- force reload
 
   return require("interactive-graphviz.lifecycle")
@@ -128,50 +143,65 @@ describe("lifecycle.teardown", function()
     package.loaded["interactive-graphviz.server"] = nil
     package.loaded["interactive-graphviz.session"] = nil
     package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
-  it("teardown() calls render.stop_all() before server.shutdown() and session.reset()", function()
-    local call_order = {}
-    local vim_stub = make_vim_stub()
-    local render_stub = {
-      stop_all = function()
-        table.insert(call_order, "stop_all")
-      end,
-      stop_watch = function(_) end,
-      start_watch = function(_) end,
-    }
-    local server_stub = {
-      shutdown = function()
-        table.insert(call_order, "shutdown")
-      end,
-      close_session = function(_) end,
-      state = { running = false },
-    }
-    local session_stub = {
-      has = function(_)
-        return false
-      end,
-      count = function()
-        return 0
-      end,
-      reset = function()
-        table.insert(call_order, "reset")
-      end,
-    }
+  it(
+    "teardown() stops render + sync watches before server.shutdown() and session.reset()",
+    function()
+      local call_order = {}
+      local vim_stub = make_vim_stub()
+      local render_stub = {
+        stop_all = function()
+          table.insert(call_order, "stop_all")
+        end,
+        stop_watch = function(_) end,
+        start_watch = function(_) end,
+      }
+      local sync_stub = {
+        stop_all = function()
+          table.insert(call_order, "sync_stop_all")
+        end,
+        stop_cursor_watch = function(_) end,
+      }
+      local server_stub = {
+        shutdown = function()
+          table.insert(call_order, "shutdown")
+        end,
+        close_session = function(_) end,
+        state = { running = false },
+      }
+      local session_stub = {
+        has = function(_)
+          return false
+        end,
+        count = function()
+          return 0
+        end,
+        reset = function()
+          table.insert(call_order, "reset")
+        end,
+      }
 
-    local lifecycle =
-      load_lifecycle(vim_stub, render_stub, server_stub, session_stub, make_log_stub())
-    lifecycle.setup() -- must be set up first (registers augroup)
+      local lifecycle =
+        load_lifecycle(vim_stub, render_stub, server_stub, session_stub, make_log_stub(), sync_stub)
+      lifecycle.setup() -- must be set up first (registers augroup)
 
-    -- Reset augroup side-effect so teardown is fresh
-    lifecycle.teardown()
+      -- Reset augroup side-effect so teardown is fresh
+      lifecycle.teardown()
 
-    assert.are.equal(3, #call_order, "exactly 3 calls must be recorded")
-    assert.are.equal("stop_all", call_order[1], "stop_all must be first")
-    assert.are.equal("shutdown", call_order[2], "shutdown must be second")
-    assert.are.equal("reset", call_order[3], "reset must be third")
-  end)
+      assert.are.equal(4, #call_order, "exactly 4 calls must be recorded")
+      assert.are.equal("stop_all", call_order[1], "render stop_all must be first")
+      assert.are.equal(
+        "sync_stop_all",
+        call_order[2],
+        "sync stop_all before shutdown (live timers)"
+      )
+      assert.are.equal("shutdown", call_order[3], "shutdown must follow the watch teardown")
+      assert.are.equal("reset", call_order[4], "reset must be last")
+    end
+  )
 end)
 
 describe("lifecycle.setup", function()
@@ -181,6 +211,7 @@ describe("lifecycle.setup", function()
     package.loaded["interactive-graphviz.server"] = nil
     package.loaded["interactive-graphviz.session"] = nil
     package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -225,6 +256,7 @@ describe("lifecycle BufDelete autocmd callback", function()
     package.loaded["interactive-graphviz.server"] = nil
     package.loaded["interactive-graphviz.session"] = nil
     package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -237,6 +269,7 @@ describe("lifecycle BufDelete autocmd callback", function()
       local render_stub = make_render_stub()
       local server_stub = make_server_stub()
       local session_stub = make_session_stub(active)
+      local sync_stub = make_sync_stub()
 
       -- Wire close_session to unregister so count() drops to 0
       server_stub.close_session = function(b)
@@ -245,7 +278,7 @@ describe("lifecycle BufDelete autocmd callback", function()
       end
 
       local lifecycle =
-        load_lifecycle(vim_stub, render_stub, server_stub, session_stub, make_log_stub())
+        load_lifecycle(vim_stub, render_stub, server_stub, session_stub, make_log_stub(), sync_stub)
       lifecycle.setup()
 
       -- Retrieve and invoke the BufDelete callback directly
@@ -261,6 +294,18 @@ describe("lifecycle BufDelete autocmd callback", function()
         end
       end
       assert.is_true(stop_watch_called, "render.stop_watch must be called for the deleted buffer")
+
+      -- Story 6.3: the cursor watch must be torn down alongside the render watch
+      local cursor_stop_called = false
+      for _, c in ipairs(sync_stub._calls) do
+        if type(c) == "table" and c.fn == "stop_cursor_watch" and c.bufnr == bufnr then
+          cursor_stop_called = true
+        end
+      end
+      assert.is_true(
+        cursor_stop_called,
+        "sync.stop_cursor_watch must be called for the deleted buffer"
+      )
 
       -- close_session must have been called
       local close_called = false

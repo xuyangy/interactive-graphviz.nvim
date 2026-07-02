@@ -6,6 +6,7 @@ GlobalRegistrator.register();
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  _cursorEmphasisSnapshot,
   _emptyNoticeElement,
   _overlayElement,
   _reapplyHighlightAfterRender,
@@ -14,6 +15,7 @@ import {
   _searchIsOpen,
   _selectionSnapshot,
   _setLastGoodDot,
+  applyCursorEmphasis,
   clearError,
   closeSearch,
   handleHighlightKeydown,
@@ -390,5 +392,97 @@ describe("live search DOM (Story 5.3)", () => {
 
     expect(counterText()).toBe("0/3");
     expect(classesOf("g-a")).toEqual([]); // zero matches → dims nothing
+  });
+});
+
+describe("cursor-echo emphasis (Story 6.3)", () => {
+  test("emphasizes exactly the matching node; last-wins; null clears", () => {
+    applyCursorEmphasis("b");
+    expect(classesOf("g-b")).toEqual(["ig-cursor"]);
+    expect(classesOf("g-a")).toEqual([]);
+    expect(_cursorEmphasisSnapshot()).toBe("b");
+
+    applyCursorEmphasis("a"); // last-wins, no trail
+    expect(classesOf("g-a")).toEqual(["ig-cursor"]);
+    expect(classesOf("g-b")).toEqual([]);
+
+    applyCursorEmphasis(null);
+    for (const id of ["g-a", "g-b", "g-c"]) {
+      expect(classesOf(id)).toEqual([]);
+    }
+    expect(_cursorEmphasisSnapshot()).toBeNull();
+  });
+
+  test("a nodeId with no matching node emphasizes nothing (miss ≡ clear)", () => {
+    applyCursorEmphasis("b");
+    applyCursorEmphasis("ghost");
+    for (const id of ["g-a", "g-b", "g-c"]) {
+      expect(classesOf(id)).toEqual([]);
+    }
+  });
+
+  test("additive beneath click-highlight: both class regimes coexist untouched", () => {
+    clickOn(el("g-a").querySelector("ellipse")!); // a selected, b neighbor, c dimmed
+    applyCursorEmphasis("c");
+
+    expect(classesOf("g-c")).toEqual(["ig-cursor", "ig-dimmed"]);
+    expect(classesOf("g-a")).toEqual(["ig-selected"]);
+    expect(classesOf("g-b")).toEqual(["ig-neighbor"]);
+    expect(_selectionSnapshot()).toEqual(["a"]);
+  });
+
+  test("a click AFTER the emphasis keeps the cursor class (applyHighlightToDom never touches it)", () => {
+    applyCursorEmphasis("c");
+    clickOn(el("g-a").querySelector("ellipse")!);
+
+    expect(classesOf("g-c")).toEqual(["ig-cursor", "ig-dimmed"]);
+    // clearing the click leaves the cursor emphasis in place
+    clickOn(document.getElementById("app")!.querySelector("svg")!);
+    expect(classesOf("g-c")).toEqual(["ig-cursor"]);
+  });
+
+  test("survives a re-render via the post-render boundary; a pruned node reads as cleared", () => {
+    applyCursorEmphasis("b");
+
+    document.getElementById("app")!.innerHTML = FIXTURE_SVG; // d3 rebuilds the subtree
+    expect(classesOf("g-b")).toEqual([]); // fresh subtree, class gone
+
+    _reapplyHighlightAfterRender();
+    expect(classesOf("g-b")).toEqual(["ig-cursor"]); // re-asserted
+
+    el("g-b").remove(); // live-reload drops the node
+    _reapplyHighlightAfterRender();
+    const cursored = document.querySelectorAll(".ig-cursor");
+    expect(cursored.length).toBe(0); // miss ≡ clear
+    expect(_cursorEmphasisSnapshot()).toBe("b"); // stored id survives (last-wins)…
+
+    document.getElementById("app")!.innerHTML = FIXTURE_SVG; // …so a render that
+    _reapplyHighlightAfterRender(); // brings the node back re-emphasizes it
+    expect(classesOf("g-b")).toEqual(["ig-cursor"]);
+  });
+
+  test("re-applies on the search-owned branch too (regimes independent)", () => {
+    applyCursorEmphasis("c");
+    openSearch();
+    const input = document.getElementById("ig-search-input") as HTMLInputElement;
+    input.value = "a";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    document.getElementById("app")!.innerHTML = FIXTURE_SVG;
+    _reapplyHighlightAfterRender(); // search owns the highlight branch
+
+    expect(classesOf("g-c")).toEqual(["ig-cursor", "ig-dimmed"]); // both regimes live
+  });
+
+  test("the stylesheet styles ig-cursor via stroke only — never element opacity", () => {
+    applyCursorEmphasis("a"); // forces stylesheet injection
+    const css = document.getElementById("ig-highlight-style")!.textContent ?? "";
+    expect(css).toContain(".ig-cursor");
+    expect(css).toContain("stroke: #4fc3f7");
+    // No rule may set element opacity for the cursor class (stroke-opacity in
+    // the pulse keyframes is fine — it breathes the outline, not the node).
+    expect(css).not.toMatch(/ig-cursor[^{}]*\{[^}]*[^-]opacity\s*:/);
+    // The precedence law is encoded in the selector: cursor yields to click/search.
+    expect(css).toContain(".ig-cursor:not(.ig-selected):not(.ig-neighbor)");
   });
 });

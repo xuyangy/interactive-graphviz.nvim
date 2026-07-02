@@ -16,10 +16,12 @@ M.defaults = {
     case_sensitive = false,
     regex = false,
   },
-  -- Story 6.2: editor↔graph sync. Only jump_on_click exists yet; the rest of
-  -- the sync surface (highlight_on_cursor, cursor_debounce_ms) is Story 6.3/6.4.
+  -- Editor↔graph sync (Epic 6). jump_on_click gates graph→buffer (Story 6.2);
+  -- highlight_on_cursor + cursor_debounce_ms gate buffer→graph (Story 6.3).
   sync = {
     jump_on_click = true,
+    highlight_on_cursor = true,
+    cursor_debounce_ms = 150,
   },
   heartbeat_ms = 2000,
   log_level = "warn",
@@ -233,8 +235,8 @@ local function validate(opts)
   end
 
   -- validate sync is a table; same fresh-table discipline as search above so
-  -- validation never mutates caller-owned data. Only jump_on_click is validated
-  -- here (Story 6.2); broader sync hardening/unknown-key warnings are Story 6.4.
+  -- validation never mutates caller-owned data. Known keys are validated here
+  -- (Stories 6.2/6.3); unknown-key warnings are Story 6.4.
   if type(opts.sync) ~= "table" then
     table.insert(warnings, "interactive-graphviz setup: sync must be a table; using defaults")
     opts.sync = vim.deepcopy(M.defaults.sync)
@@ -248,6 +250,31 @@ local function validate(opts)
         table.insert(
           warnings,
           "interactive-graphviz setup: sync.jump_on_click must be a boolean; using default true"
+        )
+      end
+    end
+    if user.highlight_on_cursor ~= nil then
+      if type(user.highlight_on_cursor) == "boolean" then
+        validated.highlight_on_cursor = user.highlight_on_cursor
+      else
+        table.insert(
+          warnings,
+          "interactive-graphviz setup: sync.highlight_on_cursor must be a boolean;"
+            .. " using default true"
+        )
+      end
+    end
+    if user.cursor_debounce_ms ~= nil then
+      if
+        type(user.cursor_debounce_ms) == "number"
+        and user.cursor_debounce_ms > 0
+        and user.cursor_debounce_ms == math.floor(user.cursor_debounce_ms)
+      then
+        validated.cursor_debounce_ms = user.cursor_debounce_ms
+      else
+        table.insert(
+          warnings,
+          "interactive-graphviz setup: sync.cursor_debounce_ms must be > 0; using default 150"
         )
       end
     end

@@ -162,6 +162,22 @@ local function make_render()
   }
 end
 
+local function make_sync()
+  local calls = {}
+  return {
+    start_cursor_watch = function(bufnr)
+      table.insert(calls, { fn = "start_cursor_watch", bufnr = bufnr })
+    end,
+    stop_cursor_watch = function(bufnr)
+      table.insert(calls, { fn = "stop_cursor_watch", bufnr = bufnr })
+    end,
+    stop_all = function()
+      table.insert(calls, { fn = "stop_all" })
+    end,
+    _calls = calls,
+  }
+end
+
 local function make_config(engine, open_cmd, engines, overrides)
   overrides = overrides or {}
   local state = {
@@ -174,7 +190,8 @@ local function make_config(engine, open_cmd, engines, overrides)
     highlight_mode = overrides.highlight_mode or "bidirectional",
     animate = overrides.animate == nil and true or overrides.animate,
     search = overrides.search or { scope = "both", case_sensitive = false, regex = false },
-    sync = overrides.sync or { jump_on_click = true },
+    sync = overrides.sync
+      or { jump_on_click = true, highlight_on_cursor = true, cursor_debounce_ms = 150 },
   }
   return {
     get = function()
@@ -219,7 +236,8 @@ local function load_commands(
   session_stub,
   config_stub,
   log_stub,
-  render_stub
+  render_stub,
+  sync_stub
 )
   _G.vim = vim_stub
 
@@ -228,6 +246,7 @@ local function load_commands(
   package.loaded["interactive-graphviz.config"] = config_stub
   package.loaded["interactive-graphviz.log"] = log_stub
   package.loaded["interactive-graphviz.render"] = render_stub or make_render()
+  package.loaded["interactive-graphviz.sync"] = sync_stub or make_sync()
   package.loaded["interactive-graphviz.commands"] = nil -- force reload
 
   return require("interactive-graphviz.commands")
@@ -244,6 +263,7 @@ describe("commands.preview", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -543,6 +563,7 @@ describe("commands.preview idempotency (pre-ready N-tabs)", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -628,6 +649,7 @@ describe("commands open_cmd tokenizer", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -699,6 +721,7 @@ describe("commands.stop", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -807,6 +830,7 @@ describe("commands.toggle", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -892,6 +916,7 @@ describe("commands.url", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -1052,6 +1077,7 @@ describe("commands.engine", function()
     package.loaded["interactive-graphviz.config"] = nil
     package.loaded["interactive-graphviz.log"] = nil
     package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
     _G.vim = nil
   end)
 
@@ -1160,5 +1186,174 @@ describe("commands.engine", function()
     assert.truthy(log._notified[1]:find("current engine: dot", 1, true))
     assert.truthy(log._notified[1]:find("available: dot, neato", 1, true))
     assert.are.equal(0, #server.send_calls)
+  end)
+end)
+
+describe("commands cursor-sync gate (Story 6.3)", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
+    _G.vim = nil
+  end)
+
+  local SYNC_ON = { jump_on_click = true, highlight_on_cursor = true, cursor_debounce_ms = 150 }
+  local SYNC_OFF = { jump_on_click = true, highlight_on_cursor = false, cursor_debounce_ms = 150 }
+
+  it("preview() with highlight_on_cursor=true starts the cursor watch (reset-first)", function()
+    local sync = make_sync()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      make_server(),
+      make_session(),
+      make_config(nil, nil, nil, { sync = SYNC_ON }),
+      make_log(),
+      make_render(),
+      sync
+    )
+
+    cmd.preview()
+
+    assert.are.equal(2, #sync._calls)
+    assert.are.equal("stop_cursor_watch", sync._calls[1].fn, "reset before start")
+    assert.are.equal("start_cursor_watch", sync._calls[2].fn)
+    assert.are.equal(3, sync._calls[2].bufnr)
+  end)
+
+  it(
+    "preview() with highlight_on_cursor=false stops any stale cursor watch and never starts it",
+    function()
+      local sync = make_sync()
+      local cmd = load_commands(
+        make_vim({ filetype = "dot", bufnr = 3 }),
+        make_server(),
+        make_session(),
+        make_config(nil, nil, nil, { sync = SYNC_OFF }),
+        make_log(),
+        make_render(),
+        sync
+      )
+
+      cmd.preview()
+
+      assert.are.equal(1, #sync._calls, "gate off: stale watcher is torn down only")
+      assert.are.equal("stop_cursor_watch", sync._calls[1].fn)
+      assert.are.equal(3, sync._calls[1].bufnr)
+    end
+  )
+
+  it(
+    "active preview with highlight_on_cursor=true reconciles the cursor watch reset-first",
+    function()
+      local sync = make_sync()
+      local server = make_server()
+      local cmd = load_commands(
+        make_vim({ filetype = "dot", bufnr = 3 }),
+        server,
+        make_session({ active = { [3] = true } }),
+        make_config(nil, nil, nil, { sync = SYNC_ON }),
+        make_log(),
+        make_render(),
+        sync
+      )
+
+      cmd.preview()
+
+      assert.are.equal(0, #server.open_session_calls, "active session stays on the fast path")
+      assert.are.equal(1, #server.send_calls, "render refresh still happens")
+      assert.are.equal(2, #sync._calls)
+      assert.are.equal("stop_cursor_watch", sync._calls[1].fn, "reset before start")
+      assert.are.equal("start_cursor_watch", sync._calls[2].fn)
+      assert.are.equal(3, sync._calls[2].bufnr)
+    end
+  )
+
+  it(
+    "active preview with highlight_on_cursor=false stops a previously running cursor watch",
+    function()
+      local sync = make_sync()
+      local server = make_server()
+      local cmd = load_commands(
+        make_vim({ filetype = "dot", bufnr = 3 }),
+        server,
+        make_session({ active = { [3] = true } }),
+        make_config(nil, nil, nil, { sync = SYNC_OFF }),
+        make_log(),
+        make_render(),
+        sync
+      )
+
+      cmd.preview()
+
+      assert.are.equal(0, #server.open_session_calls, "active session stays on the fast path")
+      assert.are.equal(1, #server.send_calls, "render refresh still happens")
+      assert.are.equal(1, #sync._calls)
+      assert.are.equal("stop_cursor_watch", sync._calls[1].fn)
+      assert.are.equal(3, sync._calls[1].bufnr)
+    end
+  )
+
+  it("a failing start_cursor_watch warns but never blocks the render/open path", function()
+    local server = make_server()
+    local log = make_log()
+    local sync = make_sync()
+    sync.start_cursor_watch = function(_)
+      error("boom")
+    end
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      server,
+      make_session(),
+      make_config(nil, nil, nil, { sync = SYNC_ON }),
+      log,
+      make_render(),
+      sync
+    )
+
+    cmd.preview()
+
+    assert.are.equal(1, #server.send_calls, "render still sent")
+    assert.are.equal(1, #log._warned, "failure surfaced as a warning")
+    assert.truthy(log._warned[1]:find("cursor-sync", 1, true))
+  end)
+
+  it("stop() tears the cursor watch down unconditionally (even with the gate off)", function()
+    local sync = make_sync()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      make_server(),
+      make_session({ active = { [3] = true } }),
+      make_config(nil, nil, nil, { sync = SYNC_OFF }),
+      make_log(),
+      make_render(),
+      sync
+    )
+
+    cmd.stop()
+
+    assert.are.equal(1, #sync._calls)
+    assert.are.equal("stop_cursor_watch", sync._calls[1].fn)
+    assert.are.equal(3, sync._calls[1].bufnr)
+  end)
+
+  it("stop() with no active session does not touch the cursor watch (idempotent no-op)", function()
+    local sync = make_sync()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      make_server(),
+      make_session(), -- no active sessions
+      make_config(nil, nil, nil, { sync = SYNC_ON }),
+      make_log(),
+      make_render(),
+      sync
+    )
+
+    cmd.stop()
+
+    assert.are.equal(0, #sync._calls)
   end)
 end)

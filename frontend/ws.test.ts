@@ -150,3 +150,39 @@ describe("sendNodeClick (Story 6.2)", () => {
     expect(socket.sent).toEqual([]); // no sessionId → no hello either
   });
 });
+
+describe("inbound emphasize dispatch (Story 6.3)", () => {
+  test("emphasize frames reach onEmphasize (string and null nodeId); junk stays ignored", async () => {
+    const { createWebSocketClient } = await import("./ws");
+    const seen: unknown[] = [];
+    createWebSocketClient({ onEmphasize: (msg) => seen.push(msg) });
+    const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+    socket.dispatch("open", {});
+
+    socket.dispatch("message", {
+      data: JSON.stringify({ type: "emphasize", sessionId: 3, nodeId: "a" }),
+    });
+    socket.dispatch("message", {
+      data: JSON.stringify({ type: "emphasize", sessionId: 3, nodeId: null }),
+    });
+    socket.dispatch("message", { data: JSON.stringify({ type: "mystery" }) });
+    socket.dispatch("message", { data: "not json at all" });
+
+    expect(seen).toEqual([
+      { type: "emphasize", sessionId: 3, nodeId: "a" },
+      { type: "emphasize", sessionId: 3, nodeId: null },
+    ]);
+  });
+
+  test("emphasize without an onEmphasize handler is a safe no-op", async () => {
+    const { createWebSocketClient } = await import("./ws");
+    createWebSocketClient({});
+    const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+    socket.dispatch("open", {});
+    expect(() =>
+      socket.dispatch("message", {
+        data: JSON.stringify({ type: "emphasize", sessionId: 3, nodeId: "a" }),
+      }),
+    ).not.toThrow();
+  });
+});

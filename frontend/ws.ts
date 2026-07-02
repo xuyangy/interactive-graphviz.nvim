@@ -6,6 +6,8 @@ export interface WebSocketClientHandlers {
   onRender?: (msg: ProtocolMessage) => void;
   onErrorDisplay?: (msg: ProtocolMessage) => void;
   onSessionClosed?: (msg: ProtocolMessage) => void;
+  /** Story 6.3 — cursor-echo emphasis: nodeId string emphasizes, null clears. */
+  onEmphasize?: (msg: ProtocolMessage) => void;
   onMessage?: (msg: ProtocolMessage) => void;
 }
 
@@ -111,6 +113,9 @@ export function createWebSocketClient(handlers: WebSocketClientHandlers = {}): W
         break;
       case "session_closed":
         handlers.onSessionClosed?.(msg);
+        break;
+      case "emphasize":
+        handlers.onEmphasize?.(msg);
         break;
       default:
         // Unrecognized inbound type: ignored (channel stays warm).

@@ -394,11 +394,46 @@ const HIGHLIGHT_BASE_CSS = `
 #app g.node.ig-selected path { stroke: #ff9800; stroke-width: 3px; }
 `;
 
+// Story 6.3 — the buffer→graph cursor echo: a passive outline in a hue apart
+// from the click/search orange regime. STROKE ONLY, never opacity, so it can
+// never dim anything and sits additively beneath the highlight classes (a
+// search-dimmed node keeps its dim; the outline just rides along). The
+// :not() guards encode the precedence law directly in CSS: when click/search
+// own a node's emphasis (selected/neighbor stroke), the cursor outline yields
+// entirely rather than fighting over the same stroke properties.
+const CURSOR_EMPHASIS_CSS = `
+#app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) ellipse,
+#app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) polygon,
+#app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) path {
+  stroke: #4fc3f7; stroke-width: 3px;
+}
+`;
+// The optional pulse: stroke-opacity only (the outline breathes; the node's
+// fill/element opacity are untouched). Gated on animationsEnabled() like the
+// highlight transition rule — reduced-motion / animate=false gets a static
+// outline.
+const CURSOR_PULSE_CSS = `
+@keyframes ig-cursor-pulse {
+  0%, 100% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.45; }
+}
+#app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) ellipse,
+#app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) polygon,
+#app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) path {
+  animation: ig-cursor-pulse 1.6s ease-in-out infinite;
+}
+`;
+
 /** The full highlight stylesheet text for the current animation gate. */
 function highlightCss(): string {
   // When animation is enabled, prepend the transition rule so class toggles
   // tween; when disabled, omit it entirely so emphasis is instant (AC5 fallback).
-  return (animationsEnabled() ? HIGHLIGHT_TRANSITION_CSS : "") + HIGHLIGHT_BASE_CSS;
+  return (
+    (animationsEnabled() ? HIGHLIGHT_TRANSITION_CSS : "") +
+    HIGHLIGHT_BASE_CSS +
+    CURSOR_EMPHASIS_CSS +
+    (animationsEnabled() ? CURSOR_PULSE_CSS : "")
+  );
 }
 
 function ensureHighlightStyle(): void {
@@ -474,6 +509,33 @@ function applyHighlightToDom(set: HighlightSet): void {
   });
 }
 
+// ── Cursor-echo emphasis (Story 6.3, FR-20) ──────────────────────────────────
+// One node id (or null), fed by the Lua→server→browser `emphasize` message.
+// Deliberately OUTSIDE the Selection/HighlightSet regime: applyHighlightToDom
+// only ever toggles ig-selected/ig-neighbor/ig-dimmed, so the ig-cursor class
+// is additive by construction and the two paths cannot contend.
+let _cursorEmphasisNode: string | null = null;
+
+/**
+ * Apply (or clear, with null) the passive cursor emphasis. Last-wins: the
+ * stored id is re-asserted on the post-render boundary. A nodeId with no
+ * matching live node (stale buffer text, not-a-node token) emphasizes nothing
+ * — miss ≡ clear, the designed graceful degradation; never an error.
+ */
+export function applyCursorEmphasis(nodeId: string | null): void {
+  _cursorEmphasisNode = typeof nodeId === "string" && nodeId.length > 0 ? nodeId : null;
+  const app = document.getElementById("app");
+  if (!app) return;
+  ensureHighlightStyle();
+  app.querySelectorAll("g.node").forEach((g) => {
+    if (_cursorEmphasisNode !== null && groupTitle(g) === _cursorEmphasisNode) {
+      g.classList.add("ig-cursor");
+    } else {
+      g.classList.remove("ig-cursor");
+    }
+  });
+}
+
 /**
  * Compute the highlight set for the current selection (+ optional cluster
  * augmentation) against a freshly-extracted model, and apply it. Pure logic is
@@ -519,6 +581,11 @@ function reapplyHighlightAfterRender(): void {
   const model = extractModelFromApp();
   _selection.retain(model); // prune nodes gone after live-reload
   installInteractionHandlers(); // idempotent re-bind
+  // Story 6.3 — re-assert the cursor-echo emphasis on the rebuilt subtree.
+  // Independent of the highlight regime, so it runs on BOTH branches below
+  // (search-owned and click-owned); a pruned/renamed node no longer matches,
+  // which reads as cleared.
+  applyCursorEmphasis(_cursorEmphasisNode);
   // Story 5.3 AC5 — if search is open with a non-empty query, it owns the
   // highlight: re-derive matches against the NEW SVG and skip the click-highlight
   // re-apply this render (they share the single applyHighlightToDom regime, so
@@ -602,11 +669,17 @@ export function _selectionSnapshot(): string[] {
   return _selection.toArray();
 }
 
-/** Force-clear highlight state (selection + cluster augment). Tests only. */
+/** Force-clear highlight state (selection + cluster augment + cursor echo). Tests only. */
 export function _resetHighlightState(): void {
   _selection.clear();
   _clusterAugment = false;
   _clusterModel = null;
+  _cursorEmphasisNode = null;
+}
+
+/** The currently stored cursor-emphasis node id, or null. Tests only. */
+export function _cursorEmphasisSnapshot(): string | null {
+  return _cursorEmphasisNode;
 }
 
 /** Set lastGoodDot directly. Tests only — production sets it in renderDotWithFallback. */

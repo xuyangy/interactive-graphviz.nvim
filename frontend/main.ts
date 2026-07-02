@@ -8,6 +8,7 @@ import {
   installResetKeybinding,
   installInteractionHandlers,
   installSearchHandlers,
+  applyCursorEmphasis,
 } from "./render";
 import { isBlankDot } from "./dot";
 import { setNodeClickSender } from "./sync";
@@ -77,6 +78,14 @@ const _wsClient = createWebSocketClient({
     const message = msg.message as string | undefined;
     const v = (msg.v as number | undefined) ?? 0;
     showError(message ?? "unknown error", v);
+  },
+  onEmphasize(msg) {
+    // Story 6.3 — cursor-echo emphasis: nodeId is a string to emphasize or
+    // null to clear (the one sanctioned wire null). Anything else is a
+    // malformed frame — ignore it rather than clearing on garbage. Never
+    // touches `v`, never queues a render (emphasize is transient last-wins).
+    const nodeId = msg.nodeId;
+    if (typeof nodeId === "string" || nodeId === null) applyCursorEmphasis(nodeId);
   },
   // session_closed is stash/log-only until Story 1.7.
 });
