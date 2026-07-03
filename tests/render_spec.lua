@@ -10,6 +10,8 @@ local function make_timer()
     started = false,
     stopped = false,
     closed = false,
+    stop_count = 0,
+    close_count = 0,
     delay = nil,
     callback = nil,
   }
@@ -20,9 +22,11 @@ local function make_timer()
   end
   t.stop = function(self)
     self.stopped = true
+    self.stop_count = self.stop_count + 1
   end
   t.close = function(self)
     self.closed = true
+    self.close_count = self.close_count + 1
   end
   -- Test helper: invoke the timer callback synchronously.
   t.fire = function(self)
@@ -114,6 +118,17 @@ local function make_server()
     end,
     _sent = sent,
   }
+end
+
+-- Count how many times the augroup for `bufnr` was deleted on the stub.
+local function deleted_count(vim_stub, bufnr)
+  local count = 0
+  for _, name in ipairs(vim_stub._augroups_deleted) do
+    if name == "InteractiveGraphvizRender" .. bufnr then
+      count = count + 1
+    end
+  end
+  return count
 end
 
 local function load_render(vim_stub, session_stub, config_stub, server_stub)
@@ -330,5 +345,101 @@ describe("render.stop_all", function()
       assert.is_true(timer.stopped, "timer " .. i .. " was stopped")
       assert.is_true(timer.closed, "timer " .. i .. " was closed")
     end
+    -- Augroup teardown must accompany timer teardown (the blind spot that let
+    -- the steady-state leak ship: earlier versions asserted timers only).
+    for _, bufnr in ipairs({ 10, 11, 12 }) do
+      assert.are.equal(
+        1,
+        deleted_count(vim_stub, bufnr),
+        "augroup for buffer " .. bufnr .. " was deleted exactly once"
+      )
+    end
+  end)
+
+  it("deletes the augroup of a watched buffer that was never edited (no timer)", function()
+    -- case-0 anchor regression: open/read/quit — no TextChanged ever fires,
+    -- so no timer exists and a timers-only stop_all skips the buffer entirely.
+    local vim_stub = make_vim()
+    local render = load_render(vim_stub, make_session(), make_config(), make_server())
+
+    render.start_watch(20)
+    render.stop_all()
+
+    assert.are.equal(1, deleted_count(vim_stub, 20), "augroup deleted for never-edited buffer")
+  end)
+
+  it("does not re-stop a buffer already stopped via stop_watch", function()
+    -- clear-side pin: stop_watch must clear the registry entry, otherwise
+    -- stop_all would delete the augroup a second time.
+    local vim_stub = make_vim()
+    local render = load_render(vim_stub, make_session(), make_config(), make_server())
+
+    render.start_watch(21)
+    render.stop_watch(21)
+    render.stop_all()
+
+    assert.are.equal(1, deleted_count(vim_stub, 21), "augroup deleted exactly once (by stop_watch)")
+  end)
+
+  it("deletes the augroup of a buffer whose debounce timer already fired", function()
+    -- Steady-state teardown (the bug): the fired callback nils timers[bufnr]
+    -- (render.lua real code runs under the stub's :fire()), so a timers-only
+    -- stop_all leaves the augroup alive.
+    local vim_stub = make_vim()
+    local render = load_render(vim_stub, make_session(), make_config(), make_server())
+
+    render.start_watch(22)
+    vim_stub._autocmds_created[1].callback() -- arm debounce
+    vim_stub._timers_created[1]:fire() -- fire → render.lua nils timers[22]
+
+    render.stop_all()
+
+    assert.are.equal(1, deleted_count(vim_stub, 22), "augroup deleted after steady-state fire")
+    -- Prove the fired timer really left the timers map: the fire itself
+    -- stopped+closed the handle once; stop_all must not touch it again
+    -- (re-closing a closed uv handle errors in real libuv).
+    local timer = vim_stub._timers_created[1]
+    assert.are.equal(1, timer.stop_count, "fired timer not re-stopped by stop_all")
+    assert.are.equal(1, timer.close_count, "fired timer not re-closed by stop_all")
+  end)
+
+  it("mixed population: fired buffer and pending buffer both torn down", function()
+    local vim_stub = make_vim()
+    local render = load_render(vim_stub, make_session(), make_config(), make_server())
+
+    render.start_watch(30) -- buf A: steady-state (timer fired)
+    render.start_watch(31) -- buf B: pending timer
+    vim_stub._autocmds_created[1].callback()
+    vim_stub._timers_created[1]:fire() -- A's timer fires, timers[30] nil'd
+    vim_stub._autocmds_created[2].callback() -- B's timer stays armed
+
+    render.stop_all()
+
+    assert.are.equal(1, deleted_count(vim_stub, 30), "augroup deleted for fired buffer A")
+    assert.are.equal(1, deleted_count(vim_stub, 31), "augroup deleted for pending buffer B")
+    local timer_b = vim_stub._timers_created[2]
+    assert.is_true(timer_b.stopped, "B's pending timer was stopped")
+    assert.is_true(timer_b.closed, "B's pending timer was closed")
+  end)
+
+  it("re-watching the same buffer leaves one registry entry: one deletion at stop_all", function()
+    local vim_stub = make_vim()
+    local render = load_render(vim_stub, make_session(), make_config(), make_server())
+
+    render.start_watch(23)
+    render.start_watch(23) -- idempotent re-watch (augroup recreated, set entry unchanged)
+    render.stop_all()
+
+    assert.are.equal(1, deleted_count(vim_stub, 23), "augroup deleted once despite double watch")
+  end)
+
+  it("is a no-op on a fresh module with nothing watched", function()
+    local vim_stub = make_vim()
+    local render = load_render(vim_stub, make_session(), make_config(), make_server())
+
+    assert.has_no.errors(function()
+      render.stop_all()
+    end)
+    assert.are.equal(0, #vim_stub._augroups_deleted, "no augroups deleted")
   end)
 end)

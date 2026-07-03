@@ -4,6 +4,11 @@ local M = {}
 -- Latest-wins: creating a new timer cancels the previous one for the same buffer.
 local timers = {}
 
+-- Buffers with a live watch (augroup registered). Set in start_watch, cleared
+-- in stop_watch; stop_all iterates this registry because a timers entry is
+-- transient (nil'd whenever the debounce fires) while the watch is not.
+local watched = {}
+
 local function send_render(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
@@ -70,6 +75,9 @@ function M.start_watch(bufnr)
       end
     end,
   })
+  -- Register only after autocmd creation succeeds (a throw above must not
+  -- leave a phantom entry) — same order as sync.start_cursor_watch.
+  watched[bufnr] = true
 end
 
 -- Cancel the debounce timer and remove the autocmd group for a buffer.
@@ -80,19 +88,33 @@ function M.stop_watch(bufnr)
     timers[bufnr]:close()
     timers[bufnr] = nil
   end
+  watched[bufnr] = nil
   pcall(vim.api.nvim_del_augroup_by_name, "InteractiveGraphvizRender" .. bufnr)
 end
 
--- Stop all active watches. Called during teardown (Story 1.7 will wire this).
--- Collect keys first to avoid mutating `timers` during pairs() iteration.
+-- Stop all active watches. Called during VimLeavePre teardown (lifecycle.lua).
+-- Iterate `watched`, not `timers`: every watched buffer has a `watched` entry
+-- from start_watch, while its timers entry is nil'd whenever the debounce has
+-- already fired — walking timers alone would leave the augroup (and its
+-- TextChanged autocmds) alive past teardown. timers is unioned in defensively
+-- for any handle not paired with a watch. Collect keys first to avoid mutating
+-- tables during pairs() iteration. Mirrors sync.stop_all — keep in sync.
 function M.stop_all()
+  local seen = {}
   local bufs = {}
-  for bufnr in pairs(timers) do
+  for bufnr in pairs(watched) do
+    seen[bufnr] = true
     table.insert(bufs, bufnr)
+  end
+  for bufnr in pairs(timers) do
+    if not seen[bufnr] then
+      table.insert(bufs, bufnr)
+    end
   end
   for _, bufnr in ipairs(bufs) do
     M.stop_watch(bufnr)
   end
+  watched = {}
 end
 
 return M

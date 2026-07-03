@@ -577,6 +577,7 @@ end
 -- debounce has already fired — walking timers alone would leave the augroup
 -- (and its CursorMoved autocmds) alive past teardown. timers is unioned in
 -- defensively for any handle not paired with a watch.
+-- Mirrors render.stop_all (watched-buffers registry) — keep in sync.
 function M.stop_all()
   local seen = {}
   local bufs = {}

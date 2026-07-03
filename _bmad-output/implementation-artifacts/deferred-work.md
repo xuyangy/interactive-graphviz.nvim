@@ -45,7 +45,11 @@
   (render.lua:88), so steady-state buffers keep their augroup through graceful teardown. Sync's
   `stop_all` mirrored this shape and is being fixed against `last_sent`; render needs a
   watched-buffers registry to do the same. Benign at the sole VimLeavePre call site.
-  [lua/interactive-graphviz/render.lua:88]
+  [lua/interactive-graphviz/render.lua:88] ✅ resolved in
+  spec-render-stop-all-watched-buffers (2026-07-03): render maintains a `watched` registry set in
+  start_watch and cleared in stop_watch; `stop_all` iterates the union of `watched` and `timers`
+  (timers unioned defensively) then resets the registry — steady-state and never-edited buffers
+  now get their augroups torn down, mirroring the Story 6.4 sync.stop_all fix.
 
 ## Deferred from: code review of 6-2-click-node-jump-to-source-line (2026-07-02)
 
