@@ -12,6 +12,8 @@ import {
   applyCursorEmphasis,
   readExportPayload,
   hasExportMarker,
+  showDisconnectNotice,
+  clearDisconnectNotice,
 } from "./render";
 import { isBlankDot } from "./dot";
 import { setNodeClickSender } from "./sync";
@@ -92,15 +94,31 @@ if (exportPayload !== null) {
   // throws synchronously, crashing the page. Fail visibly and inert instead.
   showError("corrupt export payload — re-export the graph from the live preview", 0);
 } else {
-  // Debug stash: all inbound envelopes are kept here for inspection.
-  // Intentional — reviewed and dismissed in Story 1.3 code review.
+  // Debug stash: the most recent inbound envelopes, kept for inspection via
+  // window.__igEnvelopes. Capped at the last MAX_STASHED_ENVELOPES — render
+  // envelopes carry the full DOT text, so an uncapped array is a slow memory
+  // leak over a long editing session on a large graph.
+  const MAX_STASHED_ENVELOPES = 50;
   const lastEnvelopes: ProtocolMessage[] = [];
 
   // Keep the handle so Story 1.7 can call wsClient.close() for graceful teardown.
   const _wsClient = createWebSocketClient({
     onMessage(msg) {
       lastEnvelopes.push(msg);
+      if (lastEnvelopes.length > MAX_STASHED_ENVELOPES) lastEnvelopes.shift();
       console.debug("interactive-graphviz: received envelope", msg);
+    },
+    onConnectionChange(connected) {
+      // A dropped socket must not leave the preview silently stale: show a cue
+      // while ws.ts reconnects with backoff, and clear it once reconnected.
+      if (connected) clearDisconnectNotice();
+      else showDisconnectNotice();
+    },
+    onAuthRejected() {
+      // Terminal (fires after onConnectionChange(false) put up the reconnecting
+      // cue): the token is stale — the server that minted this URL is gone —
+      // so ws.ts has stopped retrying. Replace the cue with the way out.
+      showDisconnectNotice("Session expired — reopen the preview from Neovim");
     },
     onRender(msg) {
       const dot = msg.dot as string | undefined;

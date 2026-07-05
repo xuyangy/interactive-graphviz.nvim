@@ -1,5 +1,5 @@
 import { getHealth } from "./health";
-import { PROTOCOL_VERSION, type ProtocolMessage } from "./protocol";
+import { PROTOCOL_VERSION, WS_CLOSE_AUTH_REJECTED, type ProtocolMessage } from "./protocol";
 import { staticAssetRoot } from "./static";
 import { SessionRegistry, type SocketData, type Subscriber } from "./sessions";
 import { encodeLine, LineBuffer } from "./stdio";
@@ -133,9 +133,11 @@ export function main(): number {
         const supplied = (msg as { token?: unknown }).token;
         if (typeof sessionId !== "number" || supplied !== token) {
           // Missing/wrong token (or no session) → reject: close, do NOT subscribe.
+          // The app-level close code marks this terminal so the frontend stops
+          // auto-reconnecting instead of re-sending the same stale hello forever.
           diag("hello rejected: invalid token or session");
           try {
-            ws.close();
+            ws.close(WS_CLOSE_AUTH_REJECTED, "invalid token or session");
           } catch {
             // already closing
           }

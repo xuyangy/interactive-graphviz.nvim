@@ -26,3 +26,11 @@ export interface ProtocolMessage {
 }
 
 export const PROTOCOL_VERSION = 1;
+
+// App-level WebSocket close code (4000-4999 range) sent when a `hello` is
+// rejected for a bad/stale token or session. The token is minted per server
+// start, so this is terminal for the page that sent it: the frontend must NOT
+// auto-reconnect (it would re-send the same stale hello forever) — it tells
+// the user to reopen the preview instead. A plain network drop closes with a
+// standard code and stays retryable.
+export const WS_CLOSE_AUTH_REJECTED = 4001;

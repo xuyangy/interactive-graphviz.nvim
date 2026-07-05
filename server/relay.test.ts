@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { WS_CLOSE_AUTH_REJECTED } from "./protocol";
 
 const SERVER = `${import.meta.dir}/server.ts`;
 
@@ -452,15 +453,19 @@ describe("message protocol + WebSocket relay", () => {
       await sleep(200);
       expect(luaInbox.length).toBe(0); // un-subscribed click never crosses to Lua
 
-      // (b) hello rejected for a bad token -> socket closed -> still no relay.
+      // (b) hello rejected for a bad token -> socket closed with the terminal
+      // auth code (the frontend keys "stop reconnecting" off it) -> no relay.
       const bad = await openSocket(ready.port);
       let closed = false;
-      bad.ws.addEventListener("close", () => {
+      let closeCode = 0;
+      bad.ws.addEventListener("close", (event: CloseEvent) => {
         closed = true;
+        closeCode = event.code;
       });
       bad.ws.send(JSON.stringify({ type: "hello", sessionId: 3, token: "not-the-token" }));
       await sleep(200);
       expect(closed).toBe(true);
+      expect(closeCode).toBe(WS_CLOSE_AUTH_REJECTED);
       try {
         bad.ws.send(JSON.stringify({ type: "node_click", sessionId: 3, nodeId: "y" }));
       } catch {

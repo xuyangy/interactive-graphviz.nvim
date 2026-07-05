@@ -283,6 +283,38 @@ export function clearEmptyNotice(): void {
   }
 }
 
+// ── Disconnect notice ─────────────────────────────────────────────────────────
+// Connection state (NOT content state): the live WebSocket to the server has
+// dropped, so edits in Neovim no longer reach the preview and whatever graph is
+// on screen is going stale. It is orthogonal to the error (red, top-right) and
+// empty (grey, top-left) surfaces — a valid-but-stale graph can stay visible
+// while disconnected — so it lives top-center and neither clears nor is cleared
+// by them. main.ts shows it on socket close and clears it on the next
+// successful open; ws.ts auto-reconnects with backoff so it self-heals — except
+// on auth rejection (stale token), where main.ts passes a terminal message
+// telling the user to reopen the preview instead.
+export function showDisconnectNotice(message = "Disconnected — reconnecting…"): void {
+  let el = document.getElementById("ig-disconnect-notice");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "ig-disconnect-notice";
+    el.style.cssText =
+      "position:fixed;top:8px;left:50%;transform:translateX(-50%);" +
+      "background:rgba(60,45,0,0.9);color:#ffcc66;padding:6px 10px;border-radius:4px;" +
+      "font-size:13px;font-family:monospace;z-index:9999;pointer-events:none;max-width:60vw;";
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+}
+
+/** Remove the disconnect notice if present. */
+export function clearDisconnectNotice(): void {
+  const el = document.getElementById("ig-disconnect-notice");
+  if (el) {
+    el.parentNode?.removeChild(el);
+  }
+}
+
 // ── Test seams ──────────────────────────────────────────────────────────────
 /** Returns lastGoodDot. Production code never calls this. */
 export function _lastGoodDot(): string | null {
@@ -297,6 +329,11 @@ export function _overlayElement(): HTMLElement | null {
 /** Returns the empty-notice element (or null). Production code never calls this. */
 export function _emptyNoticeElement(): HTMLElement | null {
   return document.getElementById("ig-empty-notice");
+}
+
+/** Returns the disconnect-notice element (or null). Production code never calls this. */
+export function _disconnectNoticeElement(): HTMLElement | null {
+  return document.getElementById("ig-disconnect-notice");
 }
 
 // ── Reset keybinding (Story 5.1 AC1) ──────────────────────────────────────────

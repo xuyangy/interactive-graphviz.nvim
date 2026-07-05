@@ -7,6 +7,7 @@ GlobalRegistrator.register();
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   _cursorEmphasisSnapshot,
+  _disconnectNoticeElement,
   _emptyNoticeElement,
   _overlayElement,
   _reapplyHighlightAfterRender,
@@ -18,6 +19,7 @@ import {
   _viewToolbarElement,
   applyCursorEmphasis,
   assembleInteractiveHtml,
+  clearDisconnectNotice,
   clearError,
   closeSearch,
   cursorPanNeeded,
@@ -35,6 +37,7 @@ import {
   saveGraphSvg,
   saveInteractiveHtml,
   serializeGraphSvg,
+  showDisconnectNotice,
   showEmptyNotice,
   showError,
   zoomBy,
@@ -304,6 +307,36 @@ describe("error overlay + empty-buffer notice (Story 1.6 / Epic 4)", () => {
     showEmptyNotice(5);
     expect(_overlayElement()).toBeNull();
     expect(_emptyNoticeElement()).not.toBeNull();
+  });
+});
+
+describe("disconnect notice (silent-disconnect fix)", () => {
+  test("showDisconnectNotice creates the notice, is idempotent, and clearDisconnectNotice removes it", () => {
+    showDisconnectNotice();
+    const el = _disconnectNoticeElement();
+    expect(el).not.toBeNull();
+    expect(el!.textContent).toContain("Disconnected");
+
+    showDisconnectNotice();
+    expect(_disconnectNoticeElement()).toBe(el); // reused in place, not duplicated
+
+    clearDisconnectNotice();
+    expect(_disconnectNoticeElement()).toBeNull();
+  });
+
+  test("clearDisconnectNotice is a safe no-op when nothing is shown", () => {
+    expect(() => clearDisconnectNotice()).not.toThrow();
+    expect(_disconnectNoticeElement()).toBeNull();
+  });
+
+  test("it is orthogonal to the error and empty surfaces — all three coexist", () => {
+    showError(new Error("boom"), 1);
+    showEmptyNotice(2); // clears the error (they are mutually exclusive)...
+    showDisconnectNotice(); // ...but the disconnect notice is independent
+    expect(_emptyNoticeElement()).not.toBeNull();
+    expect(_disconnectNoticeElement()).not.toBeNull();
+    clearDisconnectNotice();
+    expect(_emptyNoticeElement()).not.toBeNull(); // clearing one leaves the other
   });
 });
 

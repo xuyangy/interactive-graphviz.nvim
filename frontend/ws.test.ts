@@ -48,8 +48,31 @@ function setUrl(search: string): void {
   };
 }
 
+// Controllable reconnect timer: makeClient injects this so no real setTimeout
+// fires (which would construct stray sockets that bleed across tests). Reconnect
+// tests fire the pending timer explicitly with flushTimers().
+interface FakeTimer {
+  fn: () => void;
+  ms: number;
+}
+let pendingTimers: FakeTimer[] = [];
+function fakeSetTimer(fn: () => void, ms: number): unknown {
+  const handle: FakeTimer = { fn, ms };
+  pendingTimers.push(handle);
+  return handle;
+}
+function fakeClearTimer(handle: unknown): void {
+  pendingTimers = pendingTimers.filter((t) => t !== handle);
+}
+function flushTimers(): void {
+  const due = pendingTimers;
+  pendingTimers = [];
+  for (const t of due) t.fn();
+}
+
 beforeEach(() => {
   FakeWebSocket.instances = [];
+  pendingTimers = [];
   g.WebSocket = FakeWebSocket;
   setUrl("?sessionId=3&token=tok-abc");
 });
@@ -64,11 +87,18 @@ afterAll(() => {
   g.WebSocket = savedWebSocket;
 });
 
-async function makeClient() {
+async function makeClient(handlers = {}) {
   const { createWebSocketClient } = await import("./ws");
-  const client = createWebSocketClient();
+  const client = createWebSocketClient(handlers, {
+    setTimer: fakeSetTimer,
+    clearTimer: fakeClearTimer,
+  });
   const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
   return { client, socket };
+}
+
+function latestSocket(): FakeWebSocket {
+  return FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
 }
 
 describe("sendNodeClick (Story 6.2)", () => {
@@ -148,6 +178,95 @@ describe("sendNodeClick (Story 6.2)", () => {
 
     expect(client.sendNodeClick("a")).toBe(false);
     expect(socket.sent).toEqual([]); // no sessionId → no hello either
+  });
+});
+
+describe("auto-reconnect on unexpected close", () => {
+  test("close schedules a reconnect; firing it opens a new socket that re-sends hello", async () => {
+    const changes: boolean[] = [];
+    const { socket } = await makeClient({ onConnectionChange: (c: boolean) => changes.push(c) });
+    socket.dispatch("open", {});
+    expect(changes).toEqual([true]);
+    const before = FakeWebSocket.instances.length;
+
+    socket.dispatch("close", {});
+    expect(changes).toEqual([true, false]);
+    // No new socket until the backoff timer fires; the first step is 500ms.
+    expect(FakeWebSocket.instances.length).toBe(before);
+    expect(pendingTimers).toHaveLength(1);
+    expect(pendingTimers[0]!.ms).toBe(500);
+
+    flushTimers();
+    // A fresh socket is constructed; on open it re-authenticates with hello.
+    expect(FakeWebSocket.instances.length).toBe(before + 1);
+    const next = latestSocket();
+    next.dispatch("open", {});
+    expect(changes).toEqual([true, false, true]);
+    expect((JSON.parse(next.sent[0]!) as { type: string }).type).toBe("hello");
+  });
+
+  test("backoff grows across successive failed attempts and resets after a good open", async () => {
+    const { socket } = await makeClient();
+    socket.dispatch("open", {});
+
+    // Each reconnect attempt also fails (close before it ever opens).
+    socket.dispatch("close", {});
+    expect(pendingTimers[0]!.ms).toBe(500);
+    flushTimers();
+    latestSocket().dispatch("close", {});
+    expect(pendingTimers[0]!.ms).toBe(1000);
+    flushTimers();
+    latestSocket().dispatch("close", {});
+    expect(pendingTimers[0]!.ms).toBe(2000);
+    flushTimers();
+
+    // This attempt succeeds — the next drop starts backoff over at the first step.
+    latestSocket().dispatch("open", {});
+    latestSocket().dispatch("close", {});
+    expect(pendingTimers[0]!.ms).toBe(500);
+  });
+
+  test("intentional close() does not schedule a reconnect", async () => {
+    const { client, socket } = await makeClient();
+    socket.dispatch("open", {});
+    const before = FakeWebSocket.instances.length;
+
+    client.close(); // FakeWebSocket.close() dispatches the "close" event
+    expect(pendingTimers).toHaveLength(0);
+    flushTimers();
+    expect(FakeWebSocket.instances.length).toBe(before);
+  });
+
+  test("auth rejection (close code 4001) is terminal: onAuthRejected fires, NO reconnect", async () => {
+    const { WS_CLOSE_AUTH_REJECTED } = await import("./protocol");
+    const changes: boolean[] = [];
+    let rejected = 0;
+    const { socket } = await makeClient({
+      onConnectionChange: (c: boolean) => changes.push(c),
+      onAuthRejected: () => (rejected += 1),
+    });
+    socket.dispatch("open", {});
+    const before = FakeWebSocket.instances.length;
+
+    // The server rejects the stale hello by closing with the app-level code.
+    socket.dispatch("close", { code: WS_CLOSE_AUTH_REJECTED });
+
+    expect(rejected).toBe(1);
+    expect(changes).toEqual([true, false]); // the drop is still reported
+    expect(pendingTimers).toHaveLength(0); // but no retry is ever scheduled
+    flushTimers();
+    expect(FakeWebSocket.instances.length).toBe(before);
+  });
+
+  test("a normal-code close (e.g. 1006 network drop) still reconnects", async () => {
+    let rejected = 0;
+    const { socket } = await makeClient({ onAuthRejected: () => (rejected += 1) });
+    socket.dispatch("open", {});
+
+    socket.dispatch("close", { code: 1006 });
+
+    expect(rejected).toBe(0);
+    expect(pendingTimers).toHaveLength(1);
   });
 });
 
