@@ -19,9 +19,90 @@
  *
  * Out of scope here: the overlays (overlays.ts) and the view toolbar
  * (toolbar.ts) style themselves via element-inline cssText — geometry the
- * tests assert directly. Theming (plan item #5) can reach them with CSS
- * variables, which work in inline styles too.
+ * tests assert directly. Their COLORS reference the theme variables below
+ * (var() works in inline styles), so they theme with the page.
  */
+
+/* ── Theme variables (plan item #5) ──────────────────────────────────────────
+   Light is the default (matches Graphviz's native black-on-white output);
+   the dark block below re-binds the same variables under
+   prefers-color-scheme. Every UI surface color — search box, overlays,
+   toolbar buttons, canvas — resolves through these; only the emphasis accent
+   strokes (#ff9800 / #ffcc80 / #4fc3f7) stay literal, they are mid-brightness
+   hues that read on both schemes. */
+:root {
+  --ig-canvas-bg: #ffffff;      /* page/canvas behind the graph */
+  --ig-graph-fg: #d4d4d4;       /* dark-mode remap target for DEFAULT graph black */
+  --ig-panel-bg: rgba(245, 245, 245, 0.92); /* search box */
+  --ig-panel-fg: #222222;
+  --ig-input-bg: #ffffff;
+  --ig-input-fg: #222222;
+  --ig-input-border: #bbbbbb;
+  --ig-counter-fg: #555555;     /* search N/total, some matches */
+  --ig-counter-zero-fg: #999999;/* search 0/total */
+  --ig-error-bg: rgba(255, 235, 235, 0.92); /* error overlay + invalid regex */
+  --ig-error-fg: #b00020;
+  --ig-notice-bg: rgba(235, 235, 235, 0.9); /* empty-buffer notice */
+  --ig-notice-fg: #555555;
+  --ig-warn-bg: rgba(255, 243, 205, 0.95);  /* disconnect notice */
+  --ig-warn-fg: #7a5b00;
+  --ig-button-bg: rgba(225, 225, 225, 0.9); /* view toolbar */
+  --ig-button-fg: #444444;
+  --ig-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ig-canvas-bg: #1e1e1e;
+    --ig-panel-bg: rgba(30, 30, 30, 0.92);
+    --ig-panel-fg: #eeeeee;
+    --ig-input-bg: #1b1b1b;
+    --ig-input-fg: #eeeeee;
+    --ig-input-border: #444444;
+    --ig-counter-fg: #cccccc;
+    --ig-counter-zero-fg: #999999;
+    --ig-error-bg: rgba(30, 0, 0, 0.85);
+    --ig-error-fg: #ff8080;
+    --ig-notice-bg: rgba(40, 40, 40, 0.85);
+    --ig-notice-fg: #cccccc;
+    --ig-warn-bg: rgba(60, 45, 0, 0.9);
+    --ig-warn-fg: #ffcc66;
+    --ig-button-bg: rgba(40, 40, 40, 0.85);
+    --ig-button-fg: #cccccc;
+    --ig-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+}
+
+body { background: var(--ig-canvas-bg); }
+
+/* ── Dark-mode graph remap ───────────────────────────────────────────────────
+   Graphviz emits its DEFAULTS as concrete attributes — node/edge
+   stroke="black", arrowhead fill="black", the canvas polygon fill="white" —
+   and default text with NO fill attribute at all (inherits SVG's black).
+   User-specified DOT colors (color=, fontcolor=, bgcolor=) also arrive as
+   attributes, but with their own values. So attribute-value selectors remap
+   exactly the defaults and never touch user colors: [stroke="black"] misses
+   stroke="green", text:not([fill]) misses fontcolor text, and a bgcolor
+   canvas polygon is not fill="white". (Known caveat, accepted: an EXPLICIT
+   color=black / bgcolor=white in DOT is indistinguishable from the default
+   and gets remapped too.) CSS properties beat presentation attributes in the
+   cascade, and the ig-* emphasis rules below beat these on specificity, so
+   selected/neighbor/cursor strokes still win. The SVG file export
+   (serializeGraphSvg) snapshots the SVG without this page stylesheet, so
+   exports keep Graphviz's native colors regardless of scheme. */
+/* The rgb(…) twins: d3-graphviz's render transition tweens color ATTRIBUTES
+   through d3-interpolate, which normalizes keywords to "rgb(r, g, b)" strings
+   mid-tween — without the twins, defaults would flash native black/white for
+   the duration of every animated morph. */
+@media (prefers-color-scheme: dark) {
+  #app svg .graph > polygon[fill="white"],
+  #app svg .graph > polygon[fill="rgb(255, 255, 255)"] { fill: transparent; }
+  #app svg [stroke="black"],
+  #app svg [stroke="rgb(0, 0, 0)"] { stroke: var(--ig-graph-fg); }
+  #app svg [fill="black"],
+  #app svg [fill="rgb(0, 0, 0)"] { fill: var(--ig-graph-fg); }
+  #app svg text:not([fill]) { fill: var(--ig-graph-fg); }
+}
 
 /* ── Emphasis transition (Story 5.4 AC2/AC5) ─────────────────────────────────
    Animates the Selected/Neighbor/Dimmed change by transitioning the base
@@ -87,16 +168,16 @@ html.ig-motion #app g.edge.ig-cursor:not(.ig-neighbor) polygon {
 
 /* ── Search box (Story 5.3) ──────────────────────────────────────────────── */
 #ig-search-box { position:fixed; top:8px; left:50%; transform:translateX(-50%);
-  background:rgba(30,30,30,0.92); color:#eee; padding:6px 8px; border-radius:6px;
+  background:var(--ig-panel-bg); color:var(--ig-panel-fg); padding:6px 8px; border-radius:6px;
   font-size:13px; font-family:monospace; z-index:9999; pointer-events:auto;
-  display:flex; align-items:center; gap:8px; box-shadow:0 2px 8px rgba(0,0,0,0.4);
+  display:flex; align-items:center; gap:8px; box-shadow:var(--ig-shadow);
   /* Cap the centered box so its right edge stays >=48px from the viewport edge
      on narrow windows — clear of the view toolbar's right column (see
      VIEW_TOOLBAR_CLEARANCE_PX in overlays.ts); without this the higher-z-index, pointer-events:auto
      box would capture the toolbar buttons' clicks. */
   max-width:calc(100vw - 96px); flex-wrap:wrap; }
-#ig-search-box input[type=text] { background:#1b1b1b; color:#eee; border:1px solid #444;
+#ig-search-box input[type=text] { background:var(--ig-input-bg); color:var(--ig-input-fg); border:1px solid var(--ig-input-border);
   border-radius:4px; padding:3px 6px; font-family:monospace; font-size:13px; width:220px; outline:none; }
 #ig-search-box label { display:flex; align-items:center; gap:3px; cursor:pointer; user-select:none; }
-#ig-search-box select { background:#1b1b1b; color:#eee; border:1px solid #444; border-radius:4px; font-size:12px; }
-#ig-search-counter { min-width:48px; text-align:right; color:#cccccc; }
+#ig-search-box select { background:var(--ig-input-bg); color:var(--ig-input-fg); border:1px solid var(--ig-input-border); border-radius:4px; font-size:12px; }
+#ig-search-counter { min-width:48px; text-align:right; color:var(--ig-counter-fg); }

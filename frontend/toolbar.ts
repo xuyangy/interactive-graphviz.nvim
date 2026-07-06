@@ -85,7 +85,7 @@ export function installViewToolbar(): void {
     // announced inconsistently across screen readers).
     btn.setAttribute("aria-label", tooltip);
     btn.style.cssText =
-      "width:28px;height:28px;background:rgba(40,40,40,0.85);color:#cccccc;" +
+      "width:28px;height:28px;background:var(--ig-button-bg);color:var(--ig-button-fg);" +
       "border:none;border-radius:4px;display:flex;align-items:center;" +
       "justify-content:center;padding:0;cursor:pointer;";
     // Keep focus where it is (e.g. in the open search input) — a mouse click

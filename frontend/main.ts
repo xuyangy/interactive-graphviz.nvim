@@ -3,6 +3,7 @@ import { createWebSocketClient } from "./ws";
 import { queueRender, installResetKeybinding } from "./render";
 import { installInteractionHandlers, applyCursorEmphasis } from "./emphasis";
 import { installSearchHandlers } from "./search-ui";
+import { ensureAppStyle } from "./style";
 import {
   showError,
   showEmptyNotice,
@@ -42,6 +43,13 @@ applyUrlConfig(
       ? window.location.search
       : "",
 );
+
+// Theming (plan item #5) — inject the app stylesheet at boot, not just lazily
+// on first highlight/search: the canvas background (body { background:
+// var(--ig-canvas-bg) }), the dark-mode graph remap, and the theme variables
+// the overlays/toolbar cssText references all must be live before the first
+// render or overlay. Idempotent, and the later lazy calls stay as-is.
+ensureAppStyle();
 
 // Story 5.1 — install the document-level reset-to-fit keybinding (`0` / `r`)
 // once at startup. Scroll=zoom and drag=pan are provided by d3-graphviz's

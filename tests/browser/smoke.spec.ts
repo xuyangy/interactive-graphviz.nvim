@@ -122,4 +122,28 @@ test("preview renders a real graph and click-highlight works", async ({ page }) 
   const nodeD = page.locator("g.node", { has: page.locator('title:text-is("d")') });
   await nodeD.click();
   await expect(nodeD).toHaveClass(/ig-selected/);
+
+  // Theming (plan item #5): flipping the OS color scheme themes the canvas and
+  // remaps the graph's DEFAULT colors live — pure CSS, no re-render. Clear the
+  // highlight first so the sampled ellipse carries the default stroke, not the
+  // ig-selected accent.
+  await page.keyboard.press("Escape");
+  expect(
+    await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+  ).toBe("rgb(255, 255, 255)"); // light: Graphviz-native white canvas
+  await page.emulateMedia({ colorScheme: "dark" });
+  expect(
+    await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+  ).toBe("rgb(30, 30, 30)"); // --ig-canvas-bg dark
+  // Poll: d3-graphviz's render transition tweens color attributes for a
+  // moment after a render; the remap holds once the attributes settle.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => getComputedStyle(document.querySelector("#app svg g.node ellipse")!).stroke,
+        ),
+      { timeout: 5_000 },
+    )
+    .toBe("rgb(212, 212, 212)"); // default stroke="black" remapped to --ig-graph-fg
 });

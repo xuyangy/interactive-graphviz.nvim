@@ -9,9 +9,11 @@ import {
   _setLastGoodDot,
   cursorPanNeeded,
   intersectRects,
+  setAnimate,
   viewCenterInViewBox,
   zoomBy,
 } from "./render";
+import { ensureAppStyle } from "./style";
 import {
   _cursorEmphasisSnapshot,
   _reapplyHighlightAfterRender,
@@ -881,5 +883,42 @@ describe("save-as-interactive-HTML export (view toolbar)", () => {
     document.body.innerHTML = `<div id="app"></div>`;
     await expect(saveInteractiveHtml()).resolves.toBeUndefined();
     expect(document.querySelector("a[download]")).toBeNull();
+  });
+});
+
+describe("theming (plan item #5)", () => {
+  test("the stylesheet defines theme variables with a dark-scheme override block", () => {
+    ensureAppStyle();
+    const css = document.getElementById("ig-style")!.textContent ?? "";
+    expect(css).toContain(":root");
+    expect(css).toContain("--ig-canvas-bg");
+    expect(css).toContain("@media (prefers-color-scheme: dark)");
+    // The canvas background rides the variable so the page themes with the scheme.
+    expect(css).toContain("body { background: var(--ig-canvas-bg); }");
+  });
+
+  test("the dark graph remap targets ONLY Graphviz's defaults, never user DOT colors", () => {
+    ensureAppStyle();
+    const css = document.getElementById("ig-style")!.textContent ?? "";
+    // Defaults arrive as concrete attributes — remap by attribute VALUE...
+    expect(css).toContain('#app svg [stroke="black"]');
+    expect(css).toContain('#app svg [fill="black"]');
+    expect(css).toContain('.graph > polygon[fill="white"]');
+    // ...and default text has NO fill attribute, so the :not([fill]) guard is
+    // what keeps fontcolor= text (an explicit fill attribute) untouched.
+    expect(css).toContain("#app svg text:not([fill])");
+    // No bare text rule: CSS properties beat presentation attributes in the
+    // cascade, so `#app svg text {` would clobber every fontcolor= in the DOT.
+    expect(css).not.toMatch(/#app svg text\s*\{/);
+  });
+
+  test("ensureAppStyle syncs html.ig-motion from the single animate gate", () => {
+    setAnimate(true);
+    ensureAppStyle();
+    expect(document.documentElement.classList.contains("ig-motion")).toBe(true);
+    setAnimate(false);
+    ensureAppStyle();
+    expect(document.documentElement.classList.contains("ig-motion")).toBe(false);
+    setAnimate(true); // restore the default for other tests
   });
 });

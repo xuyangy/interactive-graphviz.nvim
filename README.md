@@ -19,6 +19,11 @@ runtime** on supported platforms.
 - Editor↔graph sync, both directions: click a node to jump to its source
   line; the node under your cursor is outlined in the preview — on an edge
   line, the edge and both endpoint nodes light up.
+- Dark mode: the preview follows your OS/browser color scheme
+  (`prefers-color-scheme`) — canvas, toolbar, search box, and notices theme
+  together, and Graphviz's default black-on-white graph colors are remapped
+  in dark mode while colors you set in DOT (`color=`, `fontcolor=`,
+  `bgcolor=`) are left exactly as written.
 - `dot` and `neato` layout engines, switchable at runtime.
 - Zero-prerequisite install on supported platforms: a verified prebuilt binary
   is fetched automatically; uncovered platforms fall back to a source build.

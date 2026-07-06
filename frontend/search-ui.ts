@@ -92,11 +92,11 @@ function updateSearchCounter(count: number, total: number, valid: boolean): void
   if (!counter) return;
   if (!valid) {
     counter.textContent = "invalid regex";
-    counter.style.color = "#ff8080";
+    counter.style.color = "var(--ig-error-fg)";
     return;
   }
   counter.textContent = `${count}/${total}`;
-  counter.style.color = count === 0 ? "#999999" : "#cccccc";
+  counter.style.color = count === 0 ? "var(--ig-counter-zero-fg)" : "var(--ig-counter-fg)";
 }
 
 // The search box CSS (#ig-search-box layout, input/label/select treatment,

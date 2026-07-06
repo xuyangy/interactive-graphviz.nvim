@@ -37,8 +37,8 @@ export function showError(err: unknown, v: number): void {
     // Offset right by the toolbar clearance (not 8px) so the overlay never
     // covers the view toolbar's buttons (installViewToolbar).
     overlay.style.cssText =
-      `position:fixed;top:8px;right:${VIEW_TOOLBAR_CLEARANCE_PX}px;background:rgba(30,0,0,0.85);` +
-      "color:#ff8080;padding:6px 10px;border-radius:4px;font-size:13px;" +
+      `position:fixed;top:8px;right:${VIEW_TOOLBAR_CLEARANCE_PX}px;background:var(--ig-error-bg);` +
+      "color:var(--ig-error-fg);padding:6px 10px;border-radius:4px;font-size:13px;" +
       "font-family:monospace;z-index:9999;pointer-events:none;max-width:50vw;word-break:break-all;";
     document.body.appendChild(overlay);
   }
@@ -70,8 +70,8 @@ export function showEmptyNotice(v: number): void {
     el = document.createElement("div");
     el.id = "ig-empty-notice";
     el.style.cssText =
-      "position:fixed;top:8px;left:8px;background:rgba(40,40,40,0.85);" +
-      "color:#cccccc;padding:6px 10px;border-radius:4px;font-size:13px;" +
+      "position:fixed;top:8px;left:8px;background:var(--ig-notice-bg);" +
+      "color:var(--ig-notice-fg);padding:6px 10px;border-radius:4px;font-size:13px;" +
       "font-family:monospace;z-index:9999;pointer-events:none;max-width:50vw;";
     document.body.appendChild(el);
   }
@@ -103,7 +103,7 @@ export function showDisconnectNotice(message = "Disconnected — reconnecting…
     el.id = "ig-disconnect-notice";
     el.style.cssText =
       "position:fixed;top:8px;left:50%;transform:translateX(-50%);" +
-      "background:rgba(60,45,0,0.9);color:#ffcc66;padding:6px 10px;border-radius:4px;" +
+      "background:var(--ig-warn-bg);color:var(--ig-warn-fg);padding:6px 10px;border-radius:4px;" +
       "font-size:13px;font-family:monospace;z-index:9999;pointer-events:none;max-width:60vw;";
     document.body.appendChild(el);
   }
