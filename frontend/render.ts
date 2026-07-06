@@ -489,7 +489,16 @@ export function fitTransformForBBox(
   vb: BBoxLike,
   scaleExtent: [number, number],
 ): { k: number; tx: number; ty: number } | null {
-  if (bbox.width <= 0 || bbox.height <= 0) return null;
+  if (
+    !isFinite(bbox.x) ||
+    !isFinite(bbox.y) ||
+    !isFinite(bbox.width) ||
+    !isFinite(bbox.height) ||
+    bbox.width <= 0 ||
+    bbox.height <= 0
+  ) {
+    return null;
+  }
   const svgW = svgRect.right - svgRect.left;
   const svgH = svgRect.bottom - svgRect.top;
   const viewW = view.right - view.left;

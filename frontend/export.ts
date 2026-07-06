@@ -32,7 +32,7 @@ export function serializeGraphSvg(): string | null {
     else el.setAttribute("class", kept.join(" "));
   }
   let source = new XMLSerializer().serializeToString(clone);
-  if (!/^<svg[^>]*\sxmlns="http:\/\/www\.w3\.org\/2000\/svg"/.test(source)) {
+  if (!/^<svg[^>]*\sxmlns=(['"])http:\/\/www\.w3\.org\/2000\/svg\1/.test(source)) {
     source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
   }
   if (!/^<svg[^>]*\sxmlns:xlink=/.test(source)) {
@@ -207,7 +207,7 @@ export async function saveInteractiveHtml(): Promise<void> {
     const bundleScript =
       document.querySelector<HTMLScriptElement>('script[type="module"][src]') ??
       document.querySelector<HTMLScriptElement>("script[src]");
-    if (!bundleScript) return;
+    if (!bundleScript || !bundleScript.src) return;
     const resp = await fetch(bundleScript.src);
     if (!resp.ok) {
       // Surface the failure — with only a console.warn, the toolbar button

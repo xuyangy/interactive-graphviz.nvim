@@ -503,6 +503,26 @@ describe("live search DOM (Story 5.3)", () => {
     expect(classesOf("g-b")).toEqual(["ig-neighbor"]);
   });
 
+  test("clicking a node while search is open updates selection in background but search matches keep visual highlight", () => {
+    clickOn(el("g-c").querySelector("ellipse")!);
+    openSearch();
+    typeQuery("a"); // matches a, a->b
+    expect(classesOf("g-c")).toEqual(["ig-dimmed"]);
+
+    // Click on node a while search is open with query "a"
+    clickOn(el("g-a").querySelector("ellipse")!);
+    // Click selection state is updated in the background
+    expect(_selectionSnapshot()).toEqual(["a"]);
+    // But visually, the search matches still own the highlight
+    expect(classesOf("g-c")).toEqual(["ig-dimmed"]);
+    expect(classesOf("g-a")).not.toContain("ig-dimmed");
+
+    // Once search is closed, the new click selection highlight is displayed
+    closeSearch();
+    expect(classesOf("g-a")).toEqual(["ig-selected"]);
+    expect(classesOf("g-c")).toEqual(["ig-dimmed"]); // c is dimmed because it's not a neighbor of a
+  });
+
   test("Esc on the search input closes search without clearing the click selection", () => {
     clickOn(el("g-b").querySelector("ellipse")!);
     openSearch();

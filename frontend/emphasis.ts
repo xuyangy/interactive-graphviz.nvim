@@ -210,6 +210,9 @@ export function applyCursorEmphasis(nodeId: string | null): void {
  * to the click-selection state through this function (AC5 precedence).
  */
 export function recomputeAndApplyHighlight(): void {
+  if (_searchReapplyHook && _searchReapplyHook()) {
+    return;
+  }
   if (_selection.isEmpty()) {
     applyHighlightToDom(emptyHighlightSet());
     return;
