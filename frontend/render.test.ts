@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   fitTransformForBBox,
+  panDeltas,
   relaxScaleExtentForFit,
   shouldFitGraph,
   shouldFitSelection,
   shouldReset,
+  shouldTogglePan,
   unionBBoxes,
   type RectLike,
 } from "./render";
@@ -103,6 +105,58 @@ describe("shouldFitGraph (fit-graph-to-window `Shift+F` gesture)", () => {
 
   test("still triggers over a non-text focused element (e.g. a BUTTON)", () => {
     expect(shouldFitGraph({ key: "F" }, "BUTTON")).toBe(true);
+  });
+});
+
+describe("shouldTogglePan (pan-scroll mode `p` gesture)", () => {
+  test("triggers for unmodified `p` when nothing is focused", () => {
+    expect(shouldTogglePan({ key: "p" }, undefined)).toBe(true);
+  });
+
+  test("does not trigger for other keys (case-sensitive)", () => {
+    expect(shouldTogglePan({ key: "P" }, undefined)).toBe(false);
+    expect(shouldTogglePan({ key: "q" }, undefined)).toBe(false);
+  });
+
+  test("does not trigger while typing (a `p` in the search input is a literal)", () => {
+    expect(shouldTogglePan({ key: "p" }, "INPUT")).toBe(false);
+    expect(shouldTogglePan({ key: "p" }, "TEXTAREA")).toBe(false);
+  });
+
+  test("does not trigger when a modifier is held (so e.g. Cmd+P prints)", () => {
+    expect(shouldTogglePan({ key: "p", metaKey: true }, undefined)).toBe(false);
+    expect(shouldTogglePan({ key: "p", ctrlKey: true }, undefined)).toBe(false);
+    expect(shouldTogglePan({ key: "p", altKey: true }, undefined)).toBe(false);
+  });
+
+  test("still triggers over a non-text focused element (e.g. a BUTTON)", () => {
+    expect(shouldTogglePan({ key: "p" }, "BUTTON")).toBe(true);
+  });
+});
+
+describe("panDeltas (pan-scroll wheel math)", () => {
+  test("pixel deltas pass through; both axes kept (trackpad two-finger pan)", () => {
+    expect(panDeltas({ deltaX: 3, deltaY: -7, deltaMode: 0 })).toEqual({ dx: 3, dy: -7 });
+  });
+
+  test("Shift converts a vertical wheel into a horizontal pan", () => {
+    expect(panDeltas({ deltaX: 0, deltaY: 40, deltaMode: 0, shiftKey: true })).toEqual({
+      dx: 40,
+      dy: 0,
+    });
+  });
+
+  test("Shift passes a platform-remapped horizontal delta through untouched", () => {
+    // Some browsers already turn Shift+wheel into deltaX — no double-swap.
+    expect(panDeltas({ deltaX: 40, deltaY: 0, deltaMode: 0, shiftKey: true })).toEqual({
+      dx: 40,
+      dy: 0,
+    });
+  });
+
+  test("line and page delta modes normalize to pixel-ish values", () => {
+    expect(panDeltas({ deltaX: 0, deltaY: 3, deltaMode: 1 })).toEqual({ dx: 0, dy: 48 });
+    expect(panDeltas({ deltaX: 0, deltaY: 1, deltaMode: 2 })).toEqual({ dx: 0, dy: 100 });
   });
 });
 

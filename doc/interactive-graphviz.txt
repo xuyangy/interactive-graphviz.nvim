@@ -55,13 +55,16 @@ Browser view controls ~
     zoom, double-click to zoom in, Shift+double-click to zoom out, click+drag
     to pan, `0` or `r` to reset the view to fit the viewport, `Shift+F` to
     fit the whole graph into the current window (recomputed live, so it is
-    the one to reach for after resizing the browser window). A toolbar at
-    the top-right offers the same as buttons: a home icon to reset-to-fit,
-    a fit icon (corner brackets) to fit the graph to the window
-    and +/- magnifier icons to zoom, plus a download icon that saves the
+    the one to reach for after resizing the browser window), and `p` to
+    toggle pan-scroll mode — the wheel then pans (scroll up/down,
+    Shift+scroll left/right) instead of zooming; double-click still zooms.
+    A toolbar at the top-right offers the same as buttons: a home icon to
+    reset-to-fit, a fit icon (corner brackets) to fit the graph to the
+    window, +/- magnifier icons to zoom, a four-way-arrows icon that
+    toggles pan-scroll mode, plus a download icon that saves the
     graph as `graph.svg` — exported as currently rendered (zoom/pan
     included; reset the view first for the full graph), with any transient
-    click/cursor emphasis stripped. A sixth icon saves a self-contained
+    click/cursor emphasis stripped. A final icon saves a self-contained
     interactive `graph.html` (~1 MB): it opens offline and keeps zoom/pan,
     click-highlight, `/` search and the SVG export working, re-rendering
     the graph fresh when opened. Neovim-linked features (jump-on-click,

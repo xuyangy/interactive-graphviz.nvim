@@ -15,8 +15,9 @@ import { easeCubicInOut } from "d3-ease";
 // d3-zoom ships transitively inside the d3-graphviz bundle (its zoom behavior
 // IS d3-zoom) — same zero-new-dependency rationale as d3-transition above and
 // viewstate.ts's `zoomTransform` import. zoomIdentity builds the fit-to-
-// selection transform (plan item #6).
-import { zoomIdentity } from "d3-zoom";
+// selection transform (plan item #6); zoomTransform reads the live scale for
+// the pan-mode wheel handler.
+import { zoomIdentity, zoomTransform } from "d3-zoom";
 import { createRenderQueue } from "./render-queue";
 import {
   captureViewState,
@@ -289,9 +290,34 @@ export function handleFitGraphKeydown(e: KeyboardEvent): boolean {
 }
 
 /**
- * Install the document-level view keybindings (`0`/`r` reset, `f` fit-to-
- * selection, `Shift+F` fit-graph-to-window) once. Idempotent: a second call
- * is a no-op (guarded by a flag) so re-imports / HMR don't stack listeners.
+ * Pure predicate: should this keydown toggle pan-scroll mode (`p`)? Same
+ * guard shape as its siblings — a `p` typed into the search input stays a
+ * literal character.
+ */
+export function shouldTogglePan(e: ResetKeyEvent, activeTag: string | undefined): boolean {
+  if (e.key !== "p") return false;
+  if (activeTag === "INPUT" || activeTag === "TEXTAREA") return false;
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  return true;
+}
+
+/**
+ * Handle a real keydown for the pan-scroll toggle (`p`).
+ * Returns true when the key was handled (for tests / callers).
+ */
+export function handleTogglePanKeydown(e: KeyboardEvent): boolean {
+  if (!shouldTogglePan(e, document.activeElement?.tagName)) return false;
+  togglePanMode();
+  return true;
+}
+
+/**
+ * Install the document-level view bindings (`0`/`r` reset, `f` fit-to-
+ * selection, `Shift+F` fit-graph-to-window, `p` pan-scroll toggle, and the
+ * capture-phase wheel listener pan mode repurposes) once. Idempotent: a
+ * second call is a no-op (guarded by a flag) so re-imports / HMR don't stack
+ * listeners. The wheel listener must be non-passive (it preventDefaults) and
+ * capture-phase (it must beat d3's svg-level wheel.zoom).
  */
 let _resetKeyInstalled = false;
 export function installResetKeybinding(): void {
@@ -300,6 +326,11 @@ export function installResetKeybinding(): void {
   document.addEventListener("keydown", handleResetKeydown);
   document.addEventListener("keydown", handleFitKeydown);
   document.addEventListener("keydown", handleFitGraphKeydown);
+  document.addEventListener("keydown", handleTogglePanKeydown);
+  document.addEventListener("wheel", handlePanWheel, {
+    capture: true,
+    passive: false,
+  });
 }
 
 // The view toolbar (home / zoom-in / zoom-out / exports) lives in toolbar.ts
@@ -659,6 +690,114 @@ export function fitGraphInView(): void {
     applyFitToBBox(behavior, selection, (graphGroup as SVGGraphicsElement).getBBox());
   } catch (err) {
     console.warn("interactive-graphviz: fit-graph-to-window failed", err);
+  }
+}
+
+// ── Pan-scroll mode (the `p` / toolbar-pan affordance) ──────────────────────
+// A toggle that repurposes the scroll wheel: instead of d3-zoom's wheel=zoom,
+// the wheel PANS the view — scroll up/down moves vertically, Shift+scroll
+// moves horizontally (trackpad two-finger deltas pan both axes natively).
+// Implemented as a document-level CAPTURE wheel listener that, when the mode
+// is on, stops the event before d3's own `wheel.zoom` listener (bound on the
+// svg, a descendant) ever sees it, and applies the same translation through
+// the public zoomBehavior().translateBy — no second zoom implementation, and
+// the d3 zoom state stays the single source of truth. Zoom remains available
+// via double-click and the toolbar buttons while the mode is on.
+
+let _panMode = false;
+const _panModeListeners: ((on: boolean) => void)[] = [];
+
+/** Whether pan-scroll mode is currently on. */
+export function panModeEnabled(): boolean {
+  return _panMode;
+}
+
+/** Register a listener for pan-mode changes (toolbar pressed-state sync). */
+export function onPanModeChange(fn: (on: boolean) => void): void {
+  _panModeListeners.push(fn);
+}
+
+/** Toggle pan-scroll mode; returns the new state. */
+export function togglePanMode(): boolean {
+  _panMode = !_panMode;
+  for (const fn of _panModeListeners) fn(_panMode);
+  return _panMode;
+}
+
+/** Reset pan-scroll mode to off (listeners notified). Tests only. */
+export function _resetPanMode(): void {
+  if (_panMode) togglePanMode();
+}
+
+/** The subset of WheelEvent the pan math needs (unit-testable as a plain object). */
+export interface WheelLike {
+  deltaX: number;
+  deltaY: number;
+  /** 0 = pixels, 1 = lines, 2 = pages (WheelEvent.deltaMode). */
+  deltaMode: number;
+  shiftKey?: boolean;
+}
+
+/**
+ * Pure: screen-pixel pan deltas for a wheel event. Line/page delta modes are
+ * normalized to pixel-ish values, and Shift converts a vertical wheel into a
+ * horizontal pan — unless the platform already reports a horizontal delta
+ * (trackpads / browsers that remap Shift+wheel themselves), which passes
+ * through untouched.
+ */
+export function panDeltas(e: WheelLike): { dx: number; dy: number } {
+  const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
+  let dx = e.deltaX * scale;
+  let dy = e.deltaY * scale;
+  if (e.shiftKey === true && dx === 0) {
+    dx = dy;
+    dy = 0;
+  }
+  return { dx, dy };
+}
+
+/**
+ * Handle a wheel event while pan mode is on: consume it (so d3's wheel=zoom
+ * and the page's native scroll never fire) and translate the view by the
+ * screen-space delta. Returns true when the event was consumed. No-op (false,
+ * event untouched) when the mode is off, before the first render, or over a
+ * form control (the search box owns its own wheel behavior).
+ *
+ * Coordinate spaces: translateBy takes INPUT-space units (x' = k·(x + Δ)),
+ * and the transform maps input space to viewBox units while the wheel delta
+ * is screen px — so the delta converts via the svgRect ↔ viewBox ratio (the
+ * same px→vb bridge fitTransformForBBox uses) divided by the live scale k.
+ * Scrolling down moves the view down (content up), matching page scrolling.
+ */
+export function handlePanWheel(e: WheelEvent): boolean {
+  if (!_panMode) return false;
+  if (e.target instanceof Element && e.target.closest("input,select,textarea,button")) {
+    return false;
+  }
+  try {
+    const gv = graphviz("#app");
+    const behavior = gv.zoomBehavior();
+    const selection = gv.zoomSelection();
+    if (!behavior || !selection) return false;
+    const svg = selection.node() as SVGSVGElement | null;
+    if (!svg) return false;
+    e.preventDefault();
+    e.stopPropagation(); // capture phase: d3's svg-level wheel.zoom never fires
+    const { dx, dy } = panDeltas(e);
+    const vb = svg.viewBox?.baseVal;
+    const rect = svg.getBoundingClientRect();
+    let fx = 1;
+    let fy = 1;
+    if (vb && vb.width > 0 && vb.height > 0 && rect.width > 0 && rect.height > 0) {
+      fx = vb.width / rect.width;
+      fy = vb.height / rect.height;
+    }
+    const k = zoomTransform(svg).k || 1;
+    behavior.translateBy(selection, (-dx * fx) / k, (-dy * fy) / k);
+    return true;
+  } catch (err) {
+    console.warn("interactive-graphviz: pan-scroll failed", err);
+    return false;
   }
 }
 

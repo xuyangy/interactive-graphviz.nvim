@@ -1,14 +1,16 @@
 // toolbar.ts — the fixed view toolbar (home / fit / zoom-in / zoom-out /
-// save-SVG / save-HTML) at the top-right. Extracted from render.ts as pure
-// code motion (plan item #1a): the buttons only CALL the d3-touching code
-// paths (resetZoomToFit / fitGraphInView / zoomBy, imported from render.ts) —
-// render.ts remains the only module that imports d3-graphviz. Each button
-// wraps the SAME code path its gesture twin uses: home → resetZoomToFit()
-// (the `0`/`r` handler), fit → fitGraphInView() (the `Shift+F` handler), zoom
-// in/out → the live d3-zoom behavior's public scaleBy — the mechanism behind
-// d3-zoom's own scroll/double-click gestures. No parallel zoom implementation.
+// pan-toggle / save-SVG / save-HTML) at the top-right. Extracted from
+// render.ts as pure code motion (plan item #1a): the buttons only CALL the
+// d3-touching code paths (resetZoomToFit / fitGraphInView / zoomBy /
+// togglePanMode, imported from render.ts) — render.ts remains the only module
+// that imports d3-graphviz. Each button wraps the SAME code path its gesture
+// twin uses: home → resetZoomToFit() (the `0`/`r` handler), fit →
+// fitGraphInView() (the `Shift+F` handler), zoom in/out → the live d3-zoom
+// behavior's public scaleBy — the mechanism behind d3-zoom's own
+// scroll/double-click gestures, pan → togglePanMode() (the `p` handler). No
+// parallel zoom implementation.
 
-import { fitGraphInView, resetZoomToFit, zoomBy } from "./render";
+import { fitGraphInView, onPanModeChange, panModeEnabled, resetZoomToFit, togglePanMode, zoomBy } from "./render";
 import { isStaticExportPage, saveGraphSvg, saveInteractiveHtml } from "./export";
 
 const VIEW_TOOLBAR_ID = "ig-view-toolbar";
@@ -52,6 +54,17 @@ const ICON_ZOOM_OUT =
   '<rect fill="currentColor" x="427.79" y="406.9" width="60" height="286.5" rx="30" ry="30" transform="translate(-254.93 484.84) rotate(-45)"/>' +
   "</svg>";
 // Hand-drawn in the same coordinate scale/stroke weight as the icons above:
+// a four-way arrow cross — the pan-scroll mode toggle.
+const ICON_PAN =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 100 595.28 640" width="16" height="16" aria-hidden="true">' +
+  '<rect fill="currentColor" x="272.64" y="230" width="50" height="340" rx="25"/>' +
+  '<rect fill="currentColor" x="127.64" y="375" width="340" height="50" rx="25"/>' +
+  '<path fill="currentColor" d="M297.64,150L367.64,240H227.64Z"/>' +
+  '<path fill="currentColor" d="M297.64,650L367.64,560H227.64Z"/>' +
+  '<path fill="currentColor" d="M97.64,400L187.64,330V470Z"/>' +
+  '<path fill="currentColor" d="M497.64,400L407.64,330V470Z"/>' +
+  "</svg>";
+// Hand-drawn in the same coordinate scale/stroke weight as the icons above:
 // a down-arrow (shaft + head) over a U-shaped tray.
 const ICON_DOWNLOAD =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 100 595.28 640" width="16" height="16" aria-hidden="true">' +
@@ -70,8 +83,8 @@ const ICON_HTML_EXPORT =
 
 /**
  * Install the fixed view toolbar at the top-right: home (reset to fit),
- * fit graph to window, zoom in, zoom out. Idempotent via DOM id guard (not a
- * module flag) so it
+ * fit graph to window, zoom in, zoom out, pan-scroll toggle. Idempotent via
+ * DOM id guard (not a module flag) so it
  * can be reinstalled after the body is rebuilt. Attached to <body>, outside
  * #app, so d3-graphviz re-renders never touch it.
  */
@@ -88,7 +101,7 @@ export function installViewToolbar(): void {
     "position:fixed;top:8px;right:8px;display:flex;flex-direction:column;" +
     "gap:4px;z-index:9998;";
 
-  const addButton = (iconSvg: string, tooltip: string, onClick: () => void) => {
+  const addButton = (iconSvg: string, tooltip: string, onClick: () => void): HTMLButtonElement => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.innerHTML = iconSvg;
@@ -107,6 +120,7 @@ export function installViewToolbar(): void {
     btn.addEventListener("mousedown", (e) => e.preventDefault());
     btn.addEventListener("click", onClick);
     bar.appendChild(btn);
+    return btn;
   };
 
   addButton(ICON_HOME, "Reset view to fit (0 or r)", () => resetZoomToFit());
@@ -115,6 +129,21 @@ export function installViewToolbar(): void {
   addButton(ICON_ZOOM_OUT, "Zoom out (scroll down / Shift+double-click)", () =>
     zoomBy(1 / ZOOM_BUTTON_FACTOR),
   );
+  // Pan-scroll mode is a TOGGLE, not an action: the pressed state must track
+  // the mode wherever it is flipped from (this button or the `p` key), so it
+  // paints from the onPanModeChange seam rather than assuming its own clicks
+  // are the only source of truth. Orange = the shared selected-accent color.
+  const panBtn = addButton(
+    ICON_PAN,
+    "Toggle pan-scroll mode (p): scroll pans, Shift+scroll pans sideways",
+    () => void togglePanMode(),
+  );
+  const paintPanState = (on: boolean) => {
+    panBtn.setAttribute("aria-pressed", String(on));
+    panBtn.style.color = on ? "#ff9800" : "var(--ig-button-fg)";
+  };
+  paintPanState(panModeEnabled());
+  onPanModeChange(paintPanState);
   addButton(ICON_DOWNLOAD, "Save as SVG (as currently rendered)", () => saveGraphSvg());
   // Hidden inside an exported page: the bundle is inline there, not
   // re-fetchable, so a nested export is impossible by construction.

@@ -178,6 +178,43 @@ test("preview renders a real graph and click-highlight works", async ({ page }) 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.keyboard.press("Shift+F");
 
+  // Pan-scroll mode (`p`): the wheel PANS instead of zooming — the transform's
+  // translate moves while the SCALE stays exactly put (a zoom would change k),
+  // and Shift+wheel pans horizontally. d3-zoom's transform is always
+  // "translate(x,y) scale(k)".
+  const parseTransform = async () => {
+    const m = /translate\((-?[\d.eE+]+)[ ,](-?[\d.eE+]+)\)\s*scale\((-?[\d.eE+]+)/.exec(
+      await graphTransform(),
+    );
+    if (!m) throw new Error("unparseable zoom transform");
+    return { x: Number(m[1]), y: Number(m[2]), k: Number(m[3]) };
+  };
+  await page.mouse.move(640, 360); // wheel events target the hovered element
+  const beforePan = await parseTransform();
+  await page.keyboard.press("p");
+  await page.mouse.wheel(0, 120);
+  await expect
+    .poll(async () => {
+      const t = await parseTransform();
+      // Scrolling down moves the view down = content translates UP (y shrinks).
+      return t.k === beforePan.k && t.y < beforePan.y && t.x === beforePan.x;
+    })
+    .toBe(true);
+  const beforeShiftPan = await parseTransform();
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, 120);
+  await page.keyboard.up("Shift");
+  await expect
+    .poll(async () => {
+      const t = await parseTransform();
+      return t.k === beforeShiftPan.k && t.x < beforeShiftPan.x && t.y === beforeShiftPan.y;
+    })
+    .toBe(true);
+  // Toggle pan mode OFF and re-fit so the legs below keep wheel=zoom and
+  // every node in-viewport.
+  await page.keyboard.press("p");
+  await page.keyboard.press("Shift+F");
+
   // Esc clears the emphasis — the interaction is live, not a one-way latch.
   await page.keyboard.press("Escape");
   await expect(nodeA).not.toHaveClass(/ig-selected/);

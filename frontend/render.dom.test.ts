@@ -6,12 +6,16 @@ GlobalRegistrator.register();
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  _resetPanMode,
   _setLastGoodDot,
   cursorPanNeeded,
   fitGraphInView,
   fitSelectionInView,
   handleFitGraphKeydown,
   handleFitKeydown,
+  handlePanWheel,
+  handleTogglePanKeydown,
+  panModeEnabled,
   intersectRects,
   setAnimate,
   viewCenterInViewBox,
@@ -122,6 +126,7 @@ afterEach(() => {
   _resetSearchConfig();
   _resetHighlightState();
   _resetHighlightMode();
+  _resetPanMode();
   _setLastGoodDot(null);
   _resetSync();
   clearError(0);
@@ -798,12 +803,12 @@ describe("view toolbar (home / zoom-in / zoom-out)", () => {
   // and the button code paths are guarded no-ops before the first real render
   // (no zoom behavior exists under happy-dom — exactly the pre-render state).
 
-  test("install creates the toolbar with exactly 6 buttons, each with an icon and a tooltip", () => {
+  test("install creates the toolbar with exactly 7 buttons, each with an icon and a tooltip", () => {
     installViewToolbar();
     const bar = _viewToolbarElement();
     expect(bar).not.toBeNull();
     const buttons = bar!.querySelectorAll("button");
-    expect(buttons.length).toBe(6);
+    expect(buttons.length).toBe(7);
     for (const btn of buttons) {
       expect((btn.getAttribute("title") ?? "").length).toBeGreaterThan(0);
       // Each button carries an inline SVG icon that inherits the button color
@@ -819,15 +824,16 @@ describe("view toolbar (home / zoom-in / zoom-out)", () => {
     expect(titles[1]).toContain("Shift+F");
     expect(titles[2]).toContain("Zoom in");
     expect(titles[3]).toContain("Zoom out");
-    expect(titles[4]).toContain("Save as SVG");
-    expect(titles[5]).toContain("interactive HTML");
+    expect(titles[4]).toContain("pan-scroll mode (p)");
+    expect(titles[5]).toContain("Save as SVG");
+    expect(titles[6]).toContain("interactive HTML");
   });
 
-  test("double install is idempotent — still one toolbar, 6 buttons", () => {
+  test("double install is idempotent — still one toolbar, 7 buttons", () => {
     installViewToolbar();
     installViewToolbar();
     expect(document.querySelectorAll("#ig-view-toolbar").length).toBe(1);
-    expect(_viewToolbarElement()!.querySelectorAll("button").length).toBe(6);
+    expect(_viewToolbarElement()!.querySelectorAll("button").length).toBe(7);
   });
 
   test("clicking every button before any render is a silent no-op (no throw)", () => {
@@ -862,6 +868,36 @@ describe("view toolbar (home / zoom-in / zoom-out)", () => {
     expect(handleFitGraphKeydown(new KeyboardEvent("keydown", { key: "F", shiftKey: true }))).toBe(
       false,
     );
+  });
+
+  test("pan-scroll toggle: `p` flips the mode, the button tracks it, and the wheel path is safe", () => {
+    installViewToolbar();
+    const panBtn = [..._viewToolbarElement()!.querySelectorAll("button")].find((b) =>
+      (b.getAttribute("title") ?? "").includes("pan-scroll"),
+    )!;
+    expect(panModeEnabled()).toBe(false);
+    expect(panBtn.getAttribute("aria-pressed")).toBe("false");
+
+    // The keydown path flips the mode and the button pressed-state follows.
+    expect(handleTogglePanKeydown(new KeyboardEvent("keydown", { key: "p" }))).toBe(true);
+    expect(panModeEnabled()).toBe(true);
+    expect(panBtn.getAttribute("aria-pressed")).toBe("true");
+
+    // Clicking the button flips it back (shared state, either entry point).
+    clickOn(panBtn);
+    expect(panModeEnabled()).toBe(false);
+    expect(panBtn.getAttribute("aria-pressed")).toBe("false");
+
+    // Wheel path: mode off → not consumed; mode on but no live zoom behavior
+    // (happy-dom, pre-render) → safe no-op that reports unconsumed.
+    const wheel = new WheelEvent("wheel", { deltaY: 40 });
+    expect(handlePanWheel(wheel)).toBe(false);
+    handleTogglePanKeydown(new KeyboardEvent("keydown", { key: "p" }));
+    expect(() => handlePanWheel(wheel)).not.toThrow();
+
+    // A `p` typed into the search input stays a literal character.
+    openSearch();
+    expect(handleTogglePanKeydown(new KeyboardEvent("keydown", { key: "p" }))).toBe(false);
   });
 
   test("cursorPanNeeded: fully inside is false; crossing any edge is true", () => {
@@ -1047,13 +1083,13 @@ describe("save-as-interactive-HTML export (view toolbar)", () => {
     expect(hasExportMarker()).toBe(true);
   });
 
-  test("an exported page's toolbar omits the save-as-HTML button (5 buttons)", () => {
+  test("an exported page's toolbar omits the save-as-HTML button (6 buttons)", () => {
     (window as unknown as { __igExport?: unknown }).__igExport = PAYLOAD;
     installViewToolbar();
     const titles = [..._viewToolbarElement()!.querySelectorAll("button")].map(
       (b) => b.getAttribute("title") ?? "",
     );
-    expect(titles.length).toBe(5);
+    expect(titles.length).toBe(6);
     expect(titles.some((t) => t.includes("interactive HTML"))).toBe(false);
     // The SVG export stays available inside an exported page.
     expect(titles.some((t) => t.includes("Save as SVG"))).toBe(true);

@@ -96,10 +96,11 @@ The preview is interactive — navigate large graphs without leaving Neovim:
 | Double-click | Zoom in |
 | Shift + double-click | Zoom out |
 | Click + drag | Pan |
+| `p` | Toggle pan-scroll mode: the wheel pans instead of zooming — scroll up/down, Shift + scroll left/right (trackpads pan both axes). Double-click and the toolbar magnifiers still zoom |
 | `0` or `r` | Reset the view to fit the viewport |
 | `Shift+F` | Fit the whole graph into the current window — recomputed from the live window size, so use this after resizing the browser window |
 | `f` | Fit the view to the current highlight (click selection + neighbors, or search matches); with nothing highlighted, same as `Shift+F` |
-| Toolbar (top-right) | Click the home icon to reset the view, the corner-brackets icon to fit the graph to the window, the +/- magnifiers to zoom — button equivalents of the gestures above |
+| Toolbar (top-right) | Click the home icon to reset the view, the corner-brackets icon to fit the graph to the window, the +/- magnifiers to zoom, the four-way-arrows icon to toggle pan-scroll mode (lit orange while on) — button equivalents of the gestures above |
 | Toolbar download button | Save the graph as `graph.svg` — exported as currently rendered (including zoom/pan; press `0` first for the full graph), with any click/cursor emphasis stripped |
 | Toolbar HTML-export button | Save a self-contained interactive `graph.html` (~1 MB) — opens offline with zoom/pan, click-highlight, `/` search, and the SVG export all working. Re-renders the graph fresh when opened; Neovim-linked features (jump-on-click, cursor echo) are inert. Safe to share: the file carries your interactivity config but never the preview session's auth token |
 | Click a node | Highlight it and its neighbors; dim the rest. Also moves the Neovim cursor to the node's source line (when `sync.jump_on_click`) |
