@@ -100,7 +100,7 @@ jobs:
           # committed checksum, skipping its in-Lua curl download (a 110MB transfer that
           # stalls intermittently on cold runners). gh handles auth/redirects/retries.
           New-Item -ItemType Directory -Force -Path dist/bin | Out-Null
-          gh release download v0.10.0 --repo ${{ github.repository }} --pattern server-windows-x64.exe --dir dist/bin --clobber
+          gh release download v0.11.0 --repo ${{ github.repository }} --pattern server-windows-x64.exe --dir dist/bin --clobber
       - name: No-orphan supervision gate (NFR-3, Windows)
         shell: pwsh
         run: ./tests/integration/run_orphan_check.ps1
