@@ -28,6 +28,7 @@ import {
   _resetHighlightState,
   _selectionSnapshot,
   applyCursorEmphasis,
+  emphasizedElements,
   handleHighlightKeydown,
   installInteractionHandlers,
 } from "./emphasis";
@@ -146,6 +147,31 @@ describe("click-to-highlight DOM emphasis (Story 5.2)", () => {
     expect(classesOf("g-bc")).toEqual(["ig-dimmed"]);
     // The app stylesheet (styles.css via ensureAppStyle) is injected exactly once.
     expect(document.getElementById("ig-style")).not.toBeNull();
+  });
+
+  test("emphasizedElements mirrors the applied classes (fit-to-selection reads it, not the DOM)", () => {
+    const ids = () => emphasizedElements().map((e) => e.id);
+    expect(ids()).toEqual([]);
+    clickOn(el("g-a").querySelector("ellipse")!);
+    // Exactly the ig-selected/ig-neighbor groups, node pass before edge pass;
+    // the refs are the LIVE elements (identity, not lookalikes).
+    expect(ids()).toEqual(["g-a", "g-b", "g-ab"]);
+    expect(emphasizedElements()[0]).toBe(el("g-a"));
+
+    // Background click clears the set together with the classes.
+    clickOn(document.getElementById("app")!.querySelector("svg")!);
+    expect(ids()).toEqual([]);
+
+    // A subtree rebuild + post-render re-apply refreshes the refs to the NEW
+    // elements (the render-boundary contract fit-to-selection relies on).
+    clickOn(el("g-a").querySelector("ellipse")!);
+    const stale = emphasizedElements();
+    setupApp();
+    _reapplyHighlightAfterRender();
+    expect(ids()).toEqual(["g-a", "g-b", "g-ab"]);
+    expect(emphasizedElements()[0]).toBe(el("g-a"));
+    expect(emphasizedElements()[0]).not.toBe(stale[0]!);
+    expect(stale[0]!.isConnected).toBe(false);
   });
 
   test("background click clears every emphasis class (full opacity)", () => {

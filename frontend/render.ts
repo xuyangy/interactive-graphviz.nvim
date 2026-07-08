@@ -29,6 +29,7 @@ import { clearError, showError } from "./overlays";
 import { invalidateGraphDom } from "./graph-dom";
 import { animationsEnabled } from "./motion";
 import {
+  emphasizedElements,
   reapplyHighlightAfterRender,
   setClusterDotSource,
   setCursorPanHooks,
@@ -637,12 +638,13 @@ function applyFitToBBox(behavior: any, selection: any, bbox: BBoxLike): void {
 }
 
 /**
- * Fit the view to the current highlight: union the bboxes of every
+ * Fit the view to the current highlight: union the bboxes of every emphasized
  * ig-selected/ig-neighbor group (nodes AND connecting edges — click selection
- * and search matches alike) and apply the fit transform. Nothing highlighted →
- * fit the whole graph (fitGraphInView, so the fallback also respects the
- * current window size). No-op before the first render; guarded like
- * zoomBy/resetZoomToFit so a d3 quirk can never break the keybinding path.
+ * and search matches alike, read from the set applyHighlightToDom maintains,
+ * so no DOM re-scan per keypress) and apply the fit transform. Nothing
+ * highlighted → fit the whole graph (fitGraphInView, so the fallback also
+ * respects the current window size). No-op before the first render; guarded
+ * like zoomBy/resetZoomToFit so a d3 quirk can never break the keybinding path.
  */
 export function fitSelectionInView(): void {
   try {
@@ -650,15 +652,17 @@ export function fitSelectionInView(): void {
     const behavior = gv.zoomBehavior();
     const selection = gv.zoomSelection();
     if (!behavior || !selection) return;
-    const emphasized = document.querySelectorAll(
-      "#app svg g.node.ig-selected, #app svg g.node.ig-neighbor, #app svg g.edge.ig-neighbor",
-    );
+    // isConnected guards the sliver between a subtree rebuild and the
+    // post-render re-apply refreshing the set: a detached group has no
+    // geometry, and falling through to fitGraphInView matches what the old
+    // DOM scan (which only ever saw live elements) would have done.
+    const emphasized = emphasizedElements().filter((el) => el.isConnected);
     if (emphasized.length === 0) {
       fitGraphInView();
       return;
     }
     const bbox = unionBBoxes(
-      [...emphasized].map((el) => (el as SVGGraphicsElement).getBBox()),
+      emphasized.map((el) => (el as SVGGraphicsElement).getBBox()),
     );
     if (bbox === null) return;
     applyFitToBBox(behavior, selection, bbox);

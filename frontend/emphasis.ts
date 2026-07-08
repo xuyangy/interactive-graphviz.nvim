@@ -102,6 +102,20 @@ let _clusterAugment = false;
 // stylesheet injected via ensureAppStyle() (plan item #2). WHICH classes are
 // set is decided here; HOW they look is decided there.
 
+// The node/edge groups carrying ig-selected/ig-neighbor after the LAST
+// applyHighlightToDom pass — maintained so fit-to-selection (render.ts) reads
+// the highlight without re-scanning the DOM on every `f`. Sound because
+// applyHighlightToDom is the ONLY writer of those classes, and it re-runs on
+// the post-render boundary, so the recorded refs refresh together with the
+// classes. Between a subtree rebuild and that reapply they may briefly point
+// at detached groups; fitSelectionInView filters those with isConnected.
+let _emphasizedElements: Element[] = [];
+
+/** The emphasized (non-dimmed) groups from the last highlight application. */
+export function emphasizedElements(): readonly Element[] {
+  return _emphasizedElements;
+}
+
 /**
  * Apply a computed HighlightSet onto the live SVG: selected nodes get the
  * strongest emphasis, neighbors get the neighbor class, the connecting edges are
@@ -120,20 +134,28 @@ export function applyHighlightToDom(set: HighlightSet): void {
   // query matching only edge keys) carries edges with an empty `selected` —
   // gating on selected alone left those matches counted but invisible.
   const anyHighlight = set.selected.size > 0 || set.edges.size > 0;
+  const emphasized: Element[] = [];
   nodeEntries().forEach(({ el: g, title: name }) => {
     g.classList.remove("ig-selected", "ig-neighbor", "ig-dimmed");
     if (!anyHighlight) return; // cleared state: no classes, full opacity
     if (set.selected.has(name)) g.classList.add("ig-selected");
     else if (set.nodes.has(name)) g.classList.add("ig-neighbor");
-    else g.classList.add("ig-dimmed");
+    else {
+      g.classList.add("ig-dimmed");
+      return;
+    }
+    emphasized.push(g);
   });
   edgeEntries().forEach(({ el: g, title }) => {
     g.classList.remove("ig-neighbor", "ig-dimmed");
     if (!anyHighlight) return;
     // Edge <title> text is exactly the EdgeKey form (A->B / A--B).
-    if (set.edges.has(title)) g.classList.add("ig-neighbor");
-    else g.classList.add("ig-dimmed");
+    if (set.edges.has(title)) {
+      g.classList.add("ig-neighbor");
+      emphasized.push(g);
+    } else g.classList.add("ig-dimmed");
   });
+  _emphasizedElements = emphasized;
   // Cluster boxes (subgraph outline + title label) follow their contents: a
   // cluster dims exactly when all its member nodes dim. Membership comes from
   // the DOT-parse model — SVG cluster titles only NAME the cluster — refreshed
@@ -360,6 +382,7 @@ export function _resetHighlightState(): void {
   _clusterAugment = false;
   _clusterModel = null;
   _cursorEmphasisNode = null;
+  _emphasizedElements = [];
 }
 
 /** The currently stored cursor-emphasis node id, or null. Tests only. */
