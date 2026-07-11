@@ -17,8 +17,8 @@ runtime** on supported platforms.
 - Interactive preview: zoom/pan with view preservation across reloads,
   click-to-highlight neighbors, live search (`/`), animated transitions.
 - Editor↔graph sync, both directions: click a node to jump to its source
-  line; the node under your cursor is outlined in the preview — on an edge
-  line, the edge and both endpoint nodes light up.
+  line; the node under your cursor gets an attention-grabbing cyan glow in the
+  preview — on an edge line, the edge and both endpoint nodes light up.
 - Dark mode: the preview follows your OS/browser color scheme
   (`prefers-color-scheme`) — canvas, toolbar, search box, and notices theme
   together, and Graphviz's default black-on-white graph colors are remapped
@@ -178,14 +178,16 @@ is open, the query is re-applied against each new render.
 Re-renders and highlight changes animate by default for legibility: when the
 graph re-renders on live-reload, node and edge positions tween rather than snap,
 and when the highlight set changes (click, search, clear) the emphasis fades in
-and out. Animation never blocks interaction — the latest render always wins and
-transitions stay short and interruptible.
+and out. Cursor emphasis continuously blooms outward and contracts inward for
+as long as its target remains active. Animation never blocks interaction — the
+latest render always wins and transitions stay short and interruptible.
 
 Animation can be turned off with `setup{ animate = false }`, and it always
 honors your system's reduced-motion preference: if your OS requests
 `prefers-reduced-motion: reduce`, transitions are skipped and changes apply
 instantly regardless of the config. The non-animated instant path is the exact
-same end result, just without the tween.
+same end result, just without the tween; cursor emphasis remains a strong,
+steady cyan outline and glow instead of cycling.
 
 ### Editor↔graph sync
 
@@ -198,15 +200,17 @@ The preview and the DOT buffer stay linked in both directions:
   buffer isn't displayed in any window, you get an informative notification
   instead of a wrong jump.
 - **Editor → graph** (gated by `sync.highlight_on_cursor`, default on): rest
-  the cursor on a node's line and that node gets a passive blue outline in the
-  preview, debounced by `sync.cursor_debounce_ms`. On an edge line (`a -> b`),
-  any cursor position outlines the edge **and both endpoint nodes**; chains
-  (`a -> b -> c`) light the segment under the cursor. Moving to a line with no
-  node or edge clears the outline. The outline is deliberately quieter than
-  click-highlight — it never dims the rest of the graph and never fights an
-  active selection. In a large graph, if the target is outside the visible
-  area the view pans to center it (zoom level untouched); a target already on
-  screen never moves the view, so panning around by hand is respected.
+  the cursor on a node's line and that node gets a conspicuous cyan glow bloom
+  in the preview, debounced by `sync.cursor_debounce_ms`. On an edge line
+  (`a -> b`), any cursor position glows the edge **and both endpoint nodes**;
+  chains (`a -> b -> c`) light the segment under the cursor. Moving to a line
+  with no node or edge clears the glow. Click/search stroke precedence remains
+  authoritative: cursor emphasis never dims the rest of the graph and never
+  fights an active selection. With animation disabled or reduced motion
+  requested, the same targets keep a strong steady glow. In a large graph, if
+  the target is outside the visible area the view pans to center it (zoom level
+  untouched); a target already on screen never moves the view, so panning
+  around by hand is respected.
   Constructs the matcher can't resolve to one edge (ports like `a:p -> b`,
   subgraph endpoints like `{a b} -> c`) fall back to single-node outlining.
 

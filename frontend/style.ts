@@ -4,8 +4,8 @@
 // self-contained, and saveInteractiveHtml's single-file export needs no
 // <link>/asset handling — the stylesheet rides along inside the inlined
 // bundle. This module also owns the `html.ig-motion` class that gates the
-// stylesheet's motion rules (emphasis transition + cursor pulse): it is
-// re-synced on EVERY ensureAppStyle() call because the effective animate
+// stylesheet's motion rules (emphasis transition + repeating cursor glow):
+// it is re-synced on EVERY ensureAppStyle() call because the effective animate
 // decision can change at runtime (setAnimate / a reduced-motion toggle),
 // replacing the old recompose-the-stylesheet-text approach.
 

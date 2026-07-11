@@ -91,9 +91,12 @@ highlight_mode ~
                                                 *interactive-graphviz-animate*
 animate ~
     Boolean, default `true`. Animate graph re-renders and highlight changes.
+    Cursor emphasis also continuously blooms outward and contracts inward
+    while its target remains active.
     Set `false` for instant updates. The OS-level
     `prefers-reduced-motion: reduce` preference always disables animation
-    regardless of this key.
+    regardless of this key. With motion disabled, cursor emphasis remains a
+    strong, steady cyan outline and glow.
 
                                                  *interactive-graphviz-search*
 search ~
@@ -115,11 +118,17 @@ sync ~
                               in the browser — the plugin never raises the
                               Neovim window.
         `highlight_on_cursor` boolean (default `true`). Resting the cursor on
-                              a node's line outlines that node in the
-                              preview; on an edge line (`a -> b`) the edge
-                              AND both endpoint nodes are outlined, whatever
-                              the column (chains light the segment under the
-                              cursor). A line with no node or edge clears it.
+                              a node's line gives that node a conspicuous cyan
+                              glow bloom in the preview; on an edge line
+                              (`a -> b`) the edge AND both endpoint nodes glow,
+                              whatever the column (chains light the segment
+                              under the cursor). A line with no node or edge
+                              clears it.
+                              Click/search stroke precedence stays
+                              authoritative, and unrelated elements are never
+                              dimmed. With animation disabled or reduced
+                              motion requested, the same targets keep a strong
+                              steady glow.
                               If the target is off-screen the view pans to
                               center it (same zoom level); an on-screen
                               target never moves the view. Ports and

@@ -97,7 +97,7 @@ let _clusterModel: GraphModel | null = null;
 // whole cluster (members + intra-cluster edges). Documented in Dev Agent Record.
 let _clusterAugment = false;
 
-// The emphasis CSS (Selected/Neighbor/Dimmed treatment, cursor outline + pulse,
+// The emphasis CSS (Selected/Neighbor/Dimmed treatment, cursor outline + glow,
 // motion-gated transition) lives in styles.css — one build-time-inlined
 // stylesheet injected via ensureAppStyle() (plan item #2). WHICH classes are
 // set is decided here; HOW they look is decided there.

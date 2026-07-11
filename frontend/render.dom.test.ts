@@ -760,18 +760,37 @@ describe("cursor-echo emphasis (Story 6.3)", () => {
     expect(classesOf("g-c")).toEqual(["ig-cursor", "ig-dimmed"]); // both regimes live
   });
 
-  test("the stylesheet styles ig-cursor via stroke only — never element opacity", () => {
+  test("the stylesheet gives ig-cursor a repeating glow without element opacity", () => {
     applyCursorEmphasis("a"); // forces stylesheet injection
     const css = document.getElementById("ig-style")!.textContent ?? "";
     expect(css).toContain(".ig-cursor");
     expect(css).toContain("stroke: #4fc3f7");
-    // No rule may set element opacity for the cursor class (stroke-opacity in
-    // the pulse keyframes is fine — it breathes the outline, not the node).
+    expect(css).toContain("filter: drop-shadow(");
+    expect(css).toContain("@keyframes ig-cursor-glow");
+    expect(css).toMatch(/animation:\s*ig-cursor-glow[^;]*infinite/);
+    expect(css).toContain("html.ig-motion #app g.node.ig-cursor");
+    // No cursor rule may set element opacity: the glow is filter/stroke-only.
     expect(css).not.toMatch(/ig-cursor[^{}]*\{[^}]*[^-]opacity\s*:/);
     // The precedence law is encoded in the selector: cursor yields to click/search.
     expect(css).toContain(".ig-cursor:not(.ig-selected):not(.ig-neighbor)");
     // Edge-line emphasis has its own rule, with the same yield law for edges.
     expect(css).toContain("g.edge.ig-cursor:not(.ig-neighbor)");
+  });
+
+  test("animate=false keeps the same target set as a strong static glow", () => {
+    setAnimate(false);
+    try {
+      applyCursorEmphasis("b->c");
+
+      expect(document.documentElement.classList.contains("ig-motion")).toBe(false);
+      expect(classesOf("g-bc")).toEqual(["ig-cursor"]);
+      expect(classesOf("g-b")).toEqual(["ig-cursor"]);
+      expect(classesOf("g-c")).toEqual(["ig-cursor"]);
+      const css = document.getElementById("ig-style")!.textContent ?? "";
+      expect(css).toContain("filter: drop-shadow("); // base rule is the fallback
+    } finally {
+      setAnimate(true);
+    }
   });
 
   test("an edge key emphasizes the edge AND both endpoint nodes; last-wins; null clears", () => {

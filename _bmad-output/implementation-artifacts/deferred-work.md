@@ -8,6 +8,19 @@
 > **Triage (correct-course 2026-06-11):** `→ Story 6.1` / `→ Story 6.4` = pulled into Epic 6
 > (v3 bidirectional sync). See `../planning-artifacts/sprint-change-proposal-2026-06-11.md`.
 
+## Deferred from: review of spec-attention-grabbing-cursor-emphasis (2026-07-11)
+
+- `prefers-reduced-motion` is sampled when `ensureAppStyle()` runs; a user who changes the OS
+  preference while the cursor remains stationary can keep the prior `html.ig-motion` state until
+  the next styling entry point runs. This predates the stronger glow (the old cursor pulse used
+  the same gate). A live `matchMedia(...).change` listener could synchronize the class immediately.
+  [frontend/style.ts:24]
+- Cursor styling targets Graphviz node `ellipse`, `polygon`, and `path` geometry. Nodes rendered
+  without those shapes (for example `shape=plaintext`, or image-only content) can receive the
+  `ig-cursor` class without a visible cursor treatment. This is pre-existing shape coverage;
+  extending the cursor selectors to safe text/image geometry needs visual design and browser tests.
+  [frontend/styles.css:143]
+
 ## Deferred from: spec-cursor-edge-emphasis (2026-07-05)
 
 - Ports degrade to node emphasis: `rec:out -> b;` fails the strict gap test (`:out ` in the gap),
