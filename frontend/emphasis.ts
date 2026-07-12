@@ -204,15 +204,15 @@ function ensureCursorGlowFilter(): void {
   // Two filters with the same shadows but different regions, because the blur
   // re-runs over the whole region EVERY animation frame — region area is the
   // Firefox CPU knob. Node shapes get a tight region: the halo reaches
-  // ~12.5px past the shape's geometric bbox (bloomed stroke/2 + 3·σmax), and
-  // even the smallest default node (~54×36) keeps that inside -25%/-40%
+  // ~14px past the shape's geometric bbox (bloomed stroke/2 + 3·σ), and
+  // even the smallest default node (~54×36) keeps that inside -45%/-65%
   // padding. Edge GROUPS need the wide region: their bbox minor dimension can
   // be as small as the arrowhead (~7px) on a straight spline, so tight
-  // percentages would clip the halo flat along the run — but 400% of small
+  // percentages would clip the halo flat along the run — but 600% of small
   // stays small.
   for (const [id, x, y, w, h] of [
-    ["ig-cursor-glow", "-25%", "-40%", "150%", "180%"],
-    ["ig-cursor-glow-edge", "-150%", "-150%", "400%", "400%"],
+    ["ig-cursor-glow", "-45%", "-65%", "190%", "230%"],
+    ["ig-cursor-glow-edge", "-250%", "-250%", "600%", "600%"],
   ]) {
     const filter = document.createElementNS(SVG_NS, "filter");
     filter.setAttribute("id", id);
@@ -220,16 +220,74 @@ function ensureCursorGlowFilter(): void {
     filter.setAttribute("y", y);
     filter.setAttribute("width", w);
     filter.setAttribute("height", h);
-    // ONE feDropShadow, not the old two-layer chain: the filter re-runs every
-    // bloom frame, so each extra blur pass is per-frame CPU (measured ~2×).
-    // σ2.5 ≈ the visual middle of the old 2px+6px pair against the 4px stroke.
-    const shadow = document.createElementNS(SVG_NS, "feDropShadow");
-    shadow.setAttribute("dx", "0");
-    shadow.setAttribute("dy", "0");
-    shadow.setAttribute("stdDeviation", "2.5");
-    shadow.setAttribute("flood-color", "#4fc3f7");
-    shadow.setAttribute("flood-opacity", "1");
-    filter.appendChild(shadow);
+    // ONE blur pass, STACKED: a single gaussian layer reads as no glow at all
+    // (blurring a thin stroke band leaves only a faint fringe — v0.12.1
+    // looked like a bare stroke pulse), but each extra blur pass is per-frame
+    // CPU (the Firefox lesson, measured ~2× for two passes). So blur ONCE,
+    // then feMerge the SAME result several times — merge nodes are cheap
+    // composites, and stacking multiplies the halo's alpha toward opaque at
+    // the stroke while the outer tail stays soft: the neon look.
+    // The glow is built SHADOW-ONLY (blur SourceAlpha, flood the accent,
+    // composite in) rather than with feDropShadow: feDropShadow's output
+    // carries SourceGraphic on top, so stacking it would stack the original
+    // graphic too — a translucent DOT fill (alpha 0.2) turned ~2.5× more
+    // opaque (≈0.49) while cursor-emphasized. SourceGraphic merges exactly
+    // ONCE, last, keeping the crisp stroke above the halo.
+    // The stacked glow is then CLIPPED to outside the shape's silhouette
+    // (solidify SourceAlpha with a step transfer, composite the glow "out"
+    // of it): SourceAlpha includes the FILL, so an unclipped glow lights the
+    // whole interior and shows through translucent fills as a strong cyan
+    // wash (measured r 255→189 under an alpha-0.2 red fill). A solidified
+    // silhouette is required — "out" against the raw alpha only scales the
+    // wash by (1-fill alpha). Unfilled default nodes have interior alpha 0,
+    // so their familiar inward glow is untouched.
+    // σ4 × 3 stacks is calibrated for the near-native ~2px stroke: the halo
+    // peaks around HALF alpha right at the stroke (translucent — denser
+    // stacking reads as extra line thickness, not glow; picked from a
+    // rendered σ/stacks/opacity sweep) and fades out over ~10px.
+    // Gaussian-of-a-band falloff is steep — don't trust reach intuition,
+    // measure (glow-visual.spec.ts).
+    const blur = document.createElementNS(SVG_NS, "feGaussianBlur");
+    blur.setAttribute("in", "SourceAlpha");
+    blur.setAttribute("stdDeviation", "4");
+    blur.setAttribute("result", "blur");
+    filter.appendChild(blur);
+    const flood = document.createElementNS(SVG_NS, "feFlood");
+    flood.setAttribute("flood-color", "#4fc3f7");
+    flood.setAttribute("flood-opacity", "1");
+    flood.setAttribute("result", "color");
+    filter.appendChild(flood);
+    const composite = document.createElementNS(SVG_NS, "feComposite");
+    composite.setAttribute("in", "color");
+    composite.setAttribute("in2", "blur");
+    composite.setAttribute("operator", "in");
+    composite.setAttribute("result", "glowRaw");
+    filter.appendChild(composite);
+    const solidify = document.createElementNS(SVG_NS, "feComponentTransfer");
+    solidify.setAttribute("in", "SourceAlpha");
+    solidify.setAttribute("result", "solid");
+    const funcA = document.createElementNS(SVG_NS, "feFuncA");
+    funcA.setAttribute("type", "linear");
+    funcA.setAttribute("slope", "255");
+    funcA.setAttribute("intercept", "0");
+    solidify.appendChild(funcA);
+    filter.appendChild(solidify);
+    const clip = document.createElementNS(SVG_NS, "feComposite");
+    clip.setAttribute("in", "glowRaw");
+    clip.setAttribute("in2", "solid");
+    clip.setAttribute("operator", "out");
+    clip.setAttribute("result", "glow");
+    filter.appendChild(clip);
+    const merge = document.createElementNS(SVG_NS, "feMerge");
+    for (let i = 0; i < 3; i++) {
+      const mergeNode = document.createElementNS(SVG_NS, "feMergeNode");
+      mergeNode.setAttribute("in", "glow");
+      merge.appendChild(mergeNode);
+    }
+    const mergeSource = document.createElementNS(SVG_NS, "feMergeNode");
+    mergeSource.setAttribute("in", "SourceGraphic");
+    merge.appendChild(mergeSource);
+    filter.appendChild(merge);
     defs.appendChild(filter);
   }
   carrier.appendChild(defs);

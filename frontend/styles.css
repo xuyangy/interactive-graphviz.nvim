@@ -131,6 +131,16 @@ html.ig-motion #app g.node ellipse, html.ig-motion #app g.node polygon, html.ig-
 #app g.node.ig-selected polygon,
 #app g.node.ig-selected path { stroke: #ff9800; stroke-width: 3px; }
 
+/* The rendered svg is graph-sized (nothing fits it to the window), and SVG's
+   UA default overflow is hidden — so the cursor halo below was sheared flat
+   on every node near the graph border (on a small graph that is ALL of them:
+   the glow read as a bare stroke pulse, the v0.12.1 report). Visible overflow
+   lets filter output bleed past the svg box; it also un-clips zoomed-in
+   painting on graphs smaller than the window. The SVG export snapshots the
+   svg WITHOUT this page stylesheet, so exports keep standalone-viewer
+   clipping semantics regardless. */
+#app svg { overflow: visible; }
+
 /* ── Cursor echo (Story 6.3) ─────────────────────────────────────────────────
    The buffer→graph cursor echo: an attention-grabbing cyan outline and glow
    in a hue apart from the click/search orange regime. STROKE ONLY, never
@@ -149,12 +159,16 @@ html.ig-motion #app g.node ellipse, html.ig-motion #app g.node polygon, html.ig-
    Firefox to re-rasterize multiple large Gaussian blurs per element per frame
    (~500% CPU). The filter is now static; only stroke-width animates (below),
    and the glow follows the widening stroke through the filter for free. */
+/* Stroke widths stay near Graphviz's native 1px — the GLOW carries the
+   emphasis, the line itself must not thicken into a blob (v0.12.x used 4px/3px
+   strokes, which read as "the line got fat"). The halo density lost to the
+   thinner ink band is bought back in the filter (more feMerge stacks). */
 #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) ellipse,
 #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) polygon,
 #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) path {
   stroke: #4fc3f7;
-  stroke-width: 4px;
-  --ig-cursor-bloom-peak: 6.5px;
+  stroke-width: 2px;
+  --ig-cursor-bloom-peak: 3.5px;
   filter: url("#ig-cursor-glow");
 }
 /* Edge-line emphasis: the cursor on `a -> b` outlines the edge too (its
@@ -172,8 +186,8 @@ html.ig-motion #app g.node ellipse, html.ig-motion #app g.node polygon, html.ig-
 #app g.edge.ig-cursor:not(.ig-neighbor) path,
 #app g.edge.ig-cursor:not(.ig-neighbor) polygon {
   stroke: #4fc3f7;
-  stroke-width: 3px;
-  --ig-cursor-bloom-peak: 5px;
+  stroke-width: 1.5px;
+  --ig-cursor-bloom-peak: 2.5px;
 }
 
 /* The attention bloom: the outline repeatedly widens and contracts, and the
@@ -189,7 +203,7 @@ html.ig-motion #app g.node ellipse, html.ig-motion #app g.node polygon, html.ig-
    class across a target change can never cycle out of phase with the freshly
    emphasized edge + other endpoint. */
 @keyframes ig-cursor-bloom {
-  50% { stroke-width: var(--ig-cursor-bloom-peak, 6.5px); }
+  50% { stroke-width: var(--ig-cursor-bloom-peak, 3.5px); }
 }
 html.ig-motion #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) ellipse,
 html.ig-motion #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) polygon,

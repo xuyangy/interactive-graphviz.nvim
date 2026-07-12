@@ -339,7 +339,7 @@ test("preview renders a real graph and click-highlight works", async ({ page }) 
   expect(
     await page.evaluate(
       () =>
-        !!document.querySelector("svg#ig-cursor-glow-defs defs > filter#ig-cursor-glow > feDropShadow") &&
+        !!document.querySelector("svg#ig-cursor-glow-defs defs > filter#ig-cursor-glow > feGaussianBlur") &&
         !document.querySelector("#app filter#ig-cursor-glow"),
     ),
   ).toBe(true);

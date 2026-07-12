@@ -791,9 +791,22 @@ describe("cursor-echo emphasis (Story 6.3)", () => {
     const filter = carrier.querySelector("defs > filter#ig-cursor-glow");
     expect(filter).not.toBeNull();
     // Real SVG primitives, not CSS functions (the Safari-compatible glow
-    // path); exactly ONE shadow — the blur re-runs every bloom frame, so a
-    // second pass is pure per-frame CPU (the Firefox regression).
-    expect(filter!.querySelectorAll("feDropShadow").length).toBe(1);
+    // path); exactly ONE blur — it re-runs every bloom frame, so a second
+    // pass is pure per-frame CPU (the Firefox regression).
+    expect(filter!.querySelectorAll("feGaussianBlur").length).toBe(1);
+    // Halo DENSITY comes from feMerge-stacking that single blurred result —
+    // merge nodes are cheap composites, never extra per-frame blur passes.
+    // One layer alone reads as a bare stroke pulse (v0.12.1 regression).
+    const glowNodes = filter!.querySelectorAll('feMerge > feMergeNode[in="glow"]');
+    expect(glowNodes.length).toBeGreaterThanOrEqual(3);
+    // The stacked result must be SHADOW-ONLY, with SourceGraphic merged
+    // exactly once (last, above the halo): stacking a feDropShadow-style
+    // shadow+source output stacks the ORIGINAL graphic too, turning
+    // translucent DOT fills more opaque whenever the cursor emphasized them.
+    const sourceNodes = filter!.querySelectorAll('feMerge > feMergeNode[in="SourceGraphic"]');
+    expect(sourceNodes.length).toBe(1);
+    expect(filter!.querySelector("feMerge")!.lastElementChild).toBe(sourceNodes[0]);
+    expect(filter!.querySelectorAll("feDropShadow").length).toBe(0);
     // The edge variant (wider region for degenerate straight-spline bboxes).
     expect(carrier.querySelector("defs > filter#ig-cursor-glow-edge")).not.toBeNull();
     // NEVER inside the rendered svg: a foreign <defs> there breaks
