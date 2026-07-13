@@ -23,6 +23,14 @@ vim.api.nvim_create_user_command("GraphvizUrl", function(opts)
   dispatch("url", opts)
 end, {})
 
+vim.api.nvim_create_user_command("GraphvizCursorHighlightToggle", function(opts)
+  dispatch("toggle_cursor_highlight", opts)
+end, {})
+
+vim.api.nvim_create_user_command("GraphvizJumpOnClickToggle", function(opts)
+  dispatch("toggle_jump_on_click", opts)
+end, {})
+
 vim.api.nvim_create_user_command("GraphvizEngine", function(opts)
   dispatch("engine", opts)
 end, {

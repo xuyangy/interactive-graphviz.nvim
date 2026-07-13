@@ -156,6 +156,11 @@ When config applies ~
     mid-session: new outlines stop immediately, but an outline already on
     screen stays until the next preview open or stop (emphasis frames are
     transient and last-wins; nothing repaints on a config change alone).
+    |:GraphvizCursorHighlightToggle| does not have this nuance — it clears the
+    on-screen outline as part of turning the feature off.
+
+    Both sync gates can also be flipped at runtime without a `setup()` call via
+    |:GraphvizCursorHighlightToggle| and |:GraphvizJumpOnClickToggle|.
 
 ==============================================================================
 COMMANDS                                       *interactive-graphviz-commands*
@@ -178,6 +183,21 @@ COMMANDS                                       *interactive-graphviz-commands*
     With no argument, report the current and available layout engines. With
     an argument (e.g. `:GraphvizEngine neato`), switch the layout engine and
     re-render.
+
+                                          *:GraphvizCursorHighlightToggle*
+:GraphvizCursorHighlightToggle
+    Toggle `sync.highlight_on_cursor` on/off at runtime (buffer->graph: moving
+    the cursor onto a node/edge line outlines it in the preview). Applies to
+    every open preview at once; turning it off also clears any outline already
+    on screen. A runtime override like |:GraphvizEngine| — a later `setup()`
+    resets it.
+
+                                              *:GraphvizJumpOnClickToggle*
+:GraphvizJumpOnClickToggle
+    Toggle `sync.jump_on_click` on/off at runtime (graph->buffer: clicking a
+    node in the preview moves the Neovim cursor to its source line). Pushed to
+    every open preview live via a config_update — no re-open needed. A runtime
+    override like |:GraphvizEngine| — a later `setup()` resets it.
 
                                                                 *:GraphvizUrl*
 :GraphvizUrl

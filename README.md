@@ -80,6 +80,8 @@ Open a DOT/GV file (`filetype=dot`) and run:
 | `:GraphvizPreviewStop` | Stop the current buffer's preview. Idempotent; shuts the server down when it was the last session. |
 | `:GraphvizPreviewToggle` | Start if stopped, stop if running. |
 | `:GraphvizEngine [engine]` | With no argument, report the current and available engines. With an argument (e.g. `:GraphvizEngine neato`), switch the layout engine and re-render. |
+| `:GraphvizCursorHighlightToggle` | Toggle `sync.highlight_on_cursor` (editor → graph: cursor on a node/edge line outlines it in the preview). Runtime override like `:GraphvizEngine`; a later `setup()` resets it. Turning it off also clears any outline already on screen. |
+| `:GraphvizJumpOnClickToggle` | Toggle `sync.jump_on_click` (graph → editor: clicking a node moves the Neovim cursor to its source line). Pushed to open previews live; runtime override like `:GraphvizEngine`. |
 | `:GraphvizUrl` | Print the current buffer's full preview URL into `:messages` history. Useful when the startup notification was truncated or swallowed by a notification UI (noice.nvim, nvim-notify, …) — the echoed URL stays retrievable via `:messages`. Requires an active preview. Note the URL contains the session's auth token (loopback-scoped, dies with the server). |
 
 Edits to the buffer re-render automatically (debounced, latest-wins). On a bad
@@ -213,6 +215,12 @@ The preview and the DOT buffer stay linked in both directions:
   around by hand is respected.
   Constructs the matcher can't resolve to one edge (ports like `a:p -> b`,
   subgraph endpoints like `{a b} -> c`) fall back to single-node outlining.
+
+Both directions can be flipped on the fly without a `setup()` call:
+`:GraphvizCursorHighlightToggle` toggles the editor → graph highlighting and
+`:GraphvizJumpOnClickToggle` toggles the graph → editor jump. Each applies to
+every open preview at once; like `:GraphvizEngine`, a later `setup()` resets the
+gate to its configured value.
 
 One caveat, by design: on a click-jump, **OS window focus stays in the
 browser** — the cursor moves, but the plugin never raises or focuses the

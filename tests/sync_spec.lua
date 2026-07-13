@@ -358,6 +358,19 @@ describe("sync.handle_node_click", function()
     assert.are.equal(0, #notify_calls)
   end)
 
+  it("sync.jump_on_click disabled: does not move the cursor, returns false", function()
+    -- Authoritative Lua-side gate: an in-flight click that arrives after
+    -- :GraphvizJumpOnClickToggle turned the gate off (config_update to the
+    -- browser is async) must be dropped here, silently — the browser, not this
+    -- path, is what notifies the user about the toggle.
+    displayed_buffer(3, { "digraph {", "  a -> b;", "}" })
+    state.sync_cfg = { jump_on_click = false, highlight_on_cursor = true, cursor_debounce_ms = 150 }
+
+    assert.is_false(sync.handle_node_click(3, "b"))
+    assert.are.equal(0, #cursor_calls)
+    assert.are.equal(0, #notify_calls)
+  end)
+
   it("stale node: notifies, does not move the cursor, returns false (AC2)", function()
     displayed_buffer(3, { "a -> b;" })
 

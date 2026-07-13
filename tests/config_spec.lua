@@ -332,6 +332,46 @@ describe("config.set_engine", function()
   end)
 end)
 
+describe("config.toggle_sync", function()
+  before_each(reset)
+
+  it("flips highlight_on_cursor and returns the new value", function()
+    config.setup()
+    assert.are.equal(true, config.get().sync.highlight_on_cursor)
+
+    local now = config.toggle_sync("highlight_on_cursor")
+
+    assert.are.equal(false, now)
+    assert.are.equal(false, config.get().sync.highlight_on_cursor)
+    assert.are.equal(0, #warn_calls, "runtime setter must not emit setup warnings")
+  end)
+
+  it("flips jump_on_click and returns the new value", function()
+    config.setup()
+
+    assert.are.equal(false, config.toggle_sync("jump_on_click"))
+    assert.are.equal(false, config.get().sync.jump_on_click)
+    assert.are.equal(true, config.toggle_sync("jump_on_click"), "toggling back restores it")
+    assert.are.equal(true, config.get().sync.jump_on_click)
+  end)
+
+  it("honors a non-default starting value from setup", function()
+    config.setup({ sync = { highlight_on_cursor = false } })
+
+    assert.are.equal(true, config.toggle_sync("highlight_on_cursor"))
+    assert.are.equal(true, config.get().sync.highlight_on_cursor)
+  end)
+
+  it("returns nil for an unknown / non-boolean key without mutating config", function()
+    config.setup()
+
+    assert.is_nil(config.toggle_sync("cursor_debounce_ms"), "numeric key is not a boolean gate")
+    assert.is_nil(config.toggle_sync("nope"))
+    assert.are.equal(150, config.get().sync.cursor_debounce_ms)
+    assert.are.equal(true, config.get().sync.jump_on_click)
+  end)
+end)
+
 describe("config.setup — preserve_view validation", function()
   before_each(reset)
 

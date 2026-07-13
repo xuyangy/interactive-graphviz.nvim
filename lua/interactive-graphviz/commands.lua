@@ -324,6 +324,69 @@ function M.url()
   return url
 end
 
+-- :GraphvizCursorHighlightToggle — flip sync.highlight_on_cursor (buffer→graph:
+-- moving the cursor onto a node/edge line outlines it in the preview).
+--
+-- Runtime toggle (like :GraphvizEngine): mutates the global config, so a later
+-- setup{} resets it. Reconciles the cursor watch on EVERY active session so the
+-- change takes effect on all open previews at once, not just the current buffer.
+-- When turning OFF, additionally sends a clear-emphasis frame per session so an
+-- outline already on screen disappears immediately instead of lingering to the
+-- next render (see the config-apply-rule note in the help doc).
+function M.toggle_cursor_highlight()
+  local config = require("interactive-graphviz.config")
+  local session = require("interactive-graphviz.session")
+  local server = require("interactive-graphviz.server")
+  local log = require("interactive-graphviz.log")
+
+  local enabled = config.toggle_sync("highlight_on_cursor")
+  if enabled == nil then
+    log.warn("GraphvizCursorHighlightToggle: sync.highlight_on_cursor is not configured")
+    return
+  end
+
+  local sync_cfg = config.get().sync
+  for bufnr in pairs(session.active) do
+    reconcile_cursor_watch(bufnr, sync_cfg, log)
+    -- On disable, clear any lingering outline in that session's browser. vim.NIL
+    -- (not nil) is required: vim.json.encode drops nil-valued keys and the
+    -- server's emphasize validation needs the nodeId key present (see sync.lua).
+    if not enabled then
+      pcall(server.send, { type = "emphasize", sessionId = bufnr, nodeId = vim.NIL })
+    end
+  end
+
+  log.notify(
+    "GraphvizCursorHighlight: cursor-over-node highlighting " .. (enabled and "ON" or "OFF"),
+    vim.log.levels.INFO
+  )
+end
+
+-- :GraphvizJumpOnClickToggle — flip sync.jump_on_click (graph→buffer: clicking a
+-- node in the preview moves the Neovim cursor to its source line).
+--
+-- Runtime toggle (like :GraphvizEngine): mutates the global config, so a later
+-- setup{} resets it. The gate lives in the browser, so push_config relays the
+-- new value to every open preview via a config_update — no re-open needed.
+function M.toggle_jump_on_click()
+  local config = require("interactive-graphviz.config")
+  local server = require("interactive-graphviz.server")
+  local log = require("interactive-graphviz.log")
+
+  local enabled = config.toggle_sync("jump_on_click")
+  if enabled == nil then
+    log.warn("GraphvizJumpOnClickToggle: sync.jump_on_click is not configured")
+    return
+  end
+
+  server.push_config()
+
+  log.notify(
+    "GraphvizJumpOnClick: click-node-to-jump " .. (enabled and "ON" or "OFF"),
+    vim.log.levels.INFO
+  )
+end
+
 function M.engine(opts)
   local config = require("interactive-graphviz.config")
   local log = require("interactive-graphviz.log")

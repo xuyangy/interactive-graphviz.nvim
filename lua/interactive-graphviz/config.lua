@@ -389,6 +389,19 @@ function M.wire_params()
   }
 end
 
+-- Flip a boolean sync gate at runtime (`jump_on_click` / `highlight_on_cursor`)
+-- — the runtime-setter counterpart to set_engine, used by the toggle commands.
+-- Mutates M.options directly (like set_engine) so a later setup() still resets
+-- it. Returns the NEW value, or nil for an unknown / non-boolean key.
+function M.toggle_sync(key)
+  local sync = M.options.sync
+  if type(sync) ~= "table" or type(sync[key]) ~= "boolean" then
+    return nil
+  end
+  sync[key] = not sync[key]
+  return sync[key]
+end
+
 function M.set_engine(engine)
   if type(engine) ~= "string" or not has_engine(engine) then
     return false,

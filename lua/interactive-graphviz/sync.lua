@@ -455,6 +455,15 @@ function M.handle_node_click(session_id, node_id)
   if type(session_id) ~= "number" or type(node_id) ~= "string" or node_id == "" then
     return false
   end
+  -- Authoritative gate. The browser also gates click emission on
+  -- sync.jump_on_click, but :GraphvizJumpOnClickToggle pushes the new value via
+  -- an ASYNC config_update — a click already in flight (or fired in the window
+  -- before that update lands) still arrives here carrying the stale-enabled
+  -- state. The Lua config flips synchronously with the toggle, so re-checking it
+  -- here guarantees a disabled gate can never move the cursor.
+  if not require("interactive-graphviz.config").get().sync.jump_on_click then
+    return false
+  end
   local bufnr = session_id
   if not vim.api.nvim_buf_is_valid(bufnr) then
     log.notify(

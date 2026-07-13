@@ -23,6 +23,13 @@ local function make_vim(opts)
 
   return {
     log = { levels = { INFO = 2, WARN = 3, ERROR = 4 } },
+    -- vim.NIL sentinel: the emphasize-clear frame encodes nodeId as vim.NIL so
+    -- the key survives JSON encoding (see sync.lua / commands.toggle_cursor_highlight).
+    NIL = opts.nil_sentinel or setmetatable({}, {
+      __tostring = function()
+        return "vim.NIL"
+      end,
+    }),
     api = {
       nvim_get_current_buf = function()
         return opts.bufnr or 3
@@ -94,6 +101,7 @@ local function make_server(opts)
     shutdown_calls = {},
     send_calls = {},
     on_ready_calls = {},
+    push_config_calls = {},
   }
   self.open_session = function(bufnr)
     table.insert(self.open_session_calls, bufnr)
@@ -114,6 +122,10 @@ local function make_server(opts)
       return opts.is_running
     end
     return self.state.running
+  end
+  self.push_config = function()
+    table.insert(self.push_config_calls, true)
+    return true
   end
   -- Immediately call fn (server already running). Captures url inside the callback.
   self.on_ready = function(fn)
@@ -142,6 +154,10 @@ local function make_session(opts)
       versions[bufnr] = (versions[bufnr] or 0) + 1
       return versions[bufnr]
     end,
+    -- Mirrors session.lua's public M.active map (server.push_config and the
+    -- sync-toggle command iterate it directly). Values here are `true`, matching
+    -- the `active[bufnr] == true` convention has() uses above.
+    active = active,
     _active = active,
   }
 end
@@ -190,9 +206,20 @@ local function make_config(engine, open_cmd, engines, overrides)
     highlight_mode = overrides.highlight_mode or "bidirectional",
     animate = overrides.animate == nil and true or overrides.animate,
     search = overrides.search or { scope = "both", case_sensitive = false, regex = false },
-    sync = overrides.sync
-      or { jump_on_click = true, highlight_on_cursor = true, cursor_debounce_ms = 150 },
+    -- Shallow-copy the sync override so the stub owns its mutable state, exactly
+    -- as production config.setup() builds a fresh table. Without this, toggle_sync
+    -- would mutate a caller's shared literal and leak across tests.
+    sync = nil,
   }
+  do
+    local src = overrides.sync
+      or { jump_on_click = true, highlight_on_cursor = true, cursor_debounce_ms = 150 }
+    local copy = {}
+    for k, v in pairs(src) do
+      copy[k] = v
+    end
+    state.sync = copy
+  end
   local function b01(v)
     return v and "1" or "0"
   end
@@ -225,6 +252,15 @@ local function make_config(engine, open_cmd, engines, overrides)
           .. tostring(next_engine)
           .. "'; expected one of: "
           .. table.concat(state.engines, ", ")
+    end,
+    -- Mirrors config.toggle_sync(): flip a boolean sync gate, return the new
+    -- value (nil for a non-boolean/unknown key).
+    toggle_sync = function(key)
+      if type(state.sync[key]) ~= "boolean" then
+        return nil
+      end
+      state.sync[key] = not state.sync[key]
+      return state.sync[key]
     end,
   }
 end
@@ -1371,5 +1407,145 @@ describe("commands cursor-sync gate (Story 6.3)", function()
     cmd.stop()
 
     assert.are.equal(0, #sync._calls)
+  end)
+end)
+
+describe("commands.toggle_cursor_highlight", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
+    _G.vim = nil
+  end)
+
+  local SYNC_ON = { jump_on_click = true, highlight_on_cursor = true, cursor_debounce_ms = 150 }
+  local SYNC_OFF = { jump_on_click = true, highlight_on_cursor = false, cursor_debounce_ms = 150 }
+
+  it("turning it OFF flips config, tears down every watch, and clears each outline", function()
+    local sync = make_sync()
+    local server = make_server()
+    local config = make_config(nil, nil, nil, { sync = SYNC_ON })
+    local log = make_log()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      server,
+      make_session({ active = { [3] = true, [7] = true } }),
+      config,
+      log,
+      make_render(),
+      sync
+    )
+
+    cmd.toggle_cursor_highlight()
+
+    assert.are.equal(false, config.get().sync.highlight_on_cursor, "config flipped to off")
+    -- Gate off => reconcile is a teardown-only for each active buffer.
+    assert.are.equal(2, #sync._calls)
+    for _, c in ipairs(sync._calls) do
+      assert.are.equal("stop_cursor_watch", c.fn)
+    end
+    -- A clear-emphasis frame per active buffer (nodeId = vim.NIL).
+    assert.are.equal(2, #server.send_calls)
+    local cleared = {}
+    for _, msg in ipairs(server.send_calls) do
+      assert.are.equal("emphasize", msg.type)
+      assert.are.equal(_G.vim.NIL, msg.nodeId, "clear frame carries vim.NIL, not nil")
+      cleared[msg.sessionId] = true
+    end
+    assert.is_true(cleared[3] and cleared[7], "every active session cleared")
+    assert.truthy(log._notified[1]:find("OFF", 1, true))
+  end)
+
+  it("turning it ON flips config, starts each watch, and sends no clear frame", function()
+    local sync = make_sync()
+    local server = make_server()
+    local config = make_config(nil, nil, nil, { sync = SYNC_OFF })
+    local log = make_log()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      server,
+      make_session({ active = { [3] = true } }),
+      config,
+      log,
+      make_render(),
+      sync
+    )
+
+    cmd.toggle_cursor_highlight()
+
+    assert.are.equal(true, config.get().sync.highlight_on_cursor, "config flipped to on")
+    -- Gate on => reconcile resets then starts the watch for the active buffer.
+    assert.are.equal(2, #sync._calls)
+    assert.are.equal("stop_cursor_watch", sync._calls[1].fn, "reset before start")
+    assert.are.equal("start_cursor_watch", sync._calls[2].fn)
+    assert.are.equal(0, #server.send_calls, "enabling sends no clear frame")
+    assert.truthy(log._notified[1]:find("ON", 1, true))
+  end)
+
+  it("with no active sessions it still flips config (no watches, no frames)", function()
+    local sync = make_sync()
+    local server = make_server()
+    local config = make_config(nil, nil, nil, { sync = SYNC_ON })
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      server,
+      make_session(), -- none active
+      config,
+      make_log(),
+      make_render(),
+      sync
+    )
+
+    cmd.toggle_cursor_highlight()
+
+    assert.are.equal(false, config.get().sync.highlight_on_cursor)
+    assert.are.equal(0, #sync._calls)
+    assert.are.equal(0, #server.send_calls)
+  end)
+end)
+
+describe("commands.toggle_jump_on_click", function()
+  after_each(function()
+    package.loaded["interactive-graphviz.commands"] = nil
+    package.loaded["interactive-graphviz.server"] = nil
+    package.loaded["interactive-graphviz.session"] = nil
+    package.loaded["interactive-graphviz.config"] = nil
+    package.loaded["interactive-graphviz.log"] = nil
+    package.loaded["interactive-graphviz.render"] = nil
+    package.loaded["interactive-graphviz.sync"] = nil
+    _G.vim = nil
+  end)
+
+  local SYNC_ON = { jump_on_click = true, highlight_on_cursor = true, cursor_debounce_ms = 150 }
+
+  it("flips config and pushes the new gate to open previews", function()
+    local server = make_server()
+    local config = make_config(nil, nil, nil, { sync = SYNC_ON })
+    local log = make_log()
+    local cmd = load_commands(
+      make_vim({ filetype = "dot", bufnr = 3 }),
+      server,
+      make_session({ active = { [3] = true } }),
+      config,
+      log,
+      make_render(),
+      make_sync()
+    )
+
+    cmd.toggle_jump_on_click()
+
+    assert.are.equal(false, config.get().sync.jump_on_click, "config flipped to off")
+    assert.are.equal(1, #server.push_config_calls, "config_update pushed to open previews")
+    assert.truthy(log._notified[1]:find("OFF", 1, true))
+
+    cmd.toggle_jump_on_click()
+
+    assert.are.equal(true, config.get().sync.jump_on_click, "toggling back restores it")
+    assert.are.equal(2, #server.push_config_calls)
+    assert.truthy(log._notified[2]:find("ON", 1, true))
   end)
 end)
