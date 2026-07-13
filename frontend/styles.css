@@ -10,14 +10,12 @@
  * in export.ts).
  *
  * Motion gating (Story 5.4 AC5): the rules that MOVE — the emphasis
- * transition and the cursor attention bloom — are scoped under
- * `html.ig-motion`.
+ * transition and the cursor pulse — are scoped under `html.ig-motion`.
  * style.ts toggles that class from the single animationsEnabled() predicate
  * (config gate ∧ ¬prefers-reduced-motion) on every ensureAppStyle() call, so
  * a runtime setAnimate / reduced-motion flip takes effect without recomposing
  * stylesheet text. When the class is absent, emphasis is instant and the
- * cursor outline keeps a strong static glow — byte-identical classes, no
- * tween.
+ * cursor outline is static — byte-identical classes, no tween.
  *
  * Out of scope here: the overlays (overlays.ts) and the view toolbar
  * (toolbar.ts) style themselves via element-inline cssText — geometry the
@@ -30,7 +28,7 @@
    the dark block below re-binds the same variables under
    prefers-color-scheme. Every UI surface color — search box, overlays,
    toolbar buttons, canvas — resolves through these; only the emphasis accent
-   strokes (#ff9800 / #ffcc80 / #4fc3f7) stay literal, they are mid-brightness
+   strokes (#ff9800 / #ffcc80 / #00e5ff) stay literal, they are bright accent
    hues that read on both schemes. */
 :root {
   --ig-canvas-bg: #ffffff;      /* page/canvas behind the graph */
@@ -131,86 +129,55 @@ html.ig-motion #app g.node ellipse, html.ig-motion #app g.node polygon, html.ig-
 #app g.node.ig-selected polygon,
 #app g.node.ig-selected path { stroke: #ff9800; stroke-width: 3px; }
 
-/* The rendered svg is graph-sized (nothing fits it to the window), and SVG's
-   UA default overflow is hidden — so the cursor halo below was sheared flat
-   on every node near the graph border (on a small graph that is ALL of them:
-   the glow read as a bare stroke pulse, the v0.12.1 report). Visible overflow
-   lets filter output bleed past the svg box; it also un-clips zoomed-in
-   painting on graphs smaller than the window. The SVG export snapshots the
-   svg WITHOUT this page stylesheet, so exports keep standalone-viewer
-   clipping semantics regardless. */
-#app svg { overflow: visible; }
-
 /* ── Cursor echo (Story 6.3) ─────────────────────────────────────────────────
-   The buffer→graph cursor echo: an attention-grabbing cyan outline and glow
-   in a hue apart from the click/search orange regime. STROKE ONLY, never
-   opacity, so it can never dim
+   The buffer→graph cursor echo: a passive outline in a hue apart from the
+   click/search orange regime. STROKE ONLY, never opacity, so it can never dim
    anything and sits additively beneath the highlight classes (a search-dimmed
    node keeps its dim; the outline just rides along). The :not() guards encode
    the precedence law directly in CSS: when click/search own a node's emphasis
    (selected/neighbor stroke), the cursor outline yields entirely rather than
-   fighting over the same stroke properties.
-
-   The glow is a REAL SVG filter (#ig-cursor-glow, in a hidden carrier svg
-   emphasis.ts appends to <body>), referenced via filter:url() — NOT a chain
-   of CSS shadow filter functions. Two reasons, both learned in v0.12.0 (triage
-   2026-07-12): WebKit does not reliably render CSS filter functions on SVG
-   elements (Safari showed no glow at all), and ANIMATING the filter forced
-   Firefox to re-rasterize multiple large Gaussian blurs per element per frame
-   (~500% CPU). The filter is now static; only stroke-width animates (below),
-   and the glow follows the widening stroke through the filter for free. */
-/* Stroke widths stay near Graphviz's native 1px — the GLOW carries the
-   emphasis, the line itself must not thicken into a blob (v0.12.x used 4px/3px
-   strokes, which read as "the line got fat"). The halo density lost to the
-   thinner ink band is bought back in the filter (more feMerge stacks). */
+   fighting over the same stroke properties. */
 #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) ellipse,
 #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) polygon,
 #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) path {
-  stroke: #4fc3f7;
-  stroke-width: 2px;
-  --ig-cursor-bloom-peak: 3.5px;
-  filter: url("#ig-cursor-glow");
+  stroke: #00e5ff; stroke-width: 3px;
+  /* Pulse endpoints for the width heartbeat (below); base == static width so
+     the outline is a solid 3px when motion is off. */
+  --ig-cw: 3px; --ig-cw-peak: 5px;
 }
 /* Edge-line emphasis: the cursor on `a -> b` outlines the edge too (its
    spline + arrowhead), same hue, thinner than the node outline so the ends
    stay the anchors. Same yield rule: a click/search-owned edge keeps its
-   treatment. Stroke only, like the node rule — never opacity.
-   The glow filter goes on the edge GROUP, not the spline/arrowhead: a
-   perfectly straight spline has a zero-thickness bbox, and an SVG filter's
-   percentage region collapses with it (the edge would vanish); the group's
-   bbox includes the arrowhead, so it is never degenerate. The -edge variant
-   has a wider region for the same reason — see ensureCursorGlowFilter. */
-#app g.edge.ig-cursor:not(.ig-neighbor) {
-  filter: url("#ig-cursor-glow-edge");
-}
+   treatment. Stroke only, like the node rule — never opacity. */
 #app g.edge.ig-cursor:not(.ig-neighbor) path,
 #app g.edge.ig-cursor:not(.ig-neighbor) polygon {
-  stroke: #4fc3f7;
-  stroke-width: 1.5px;
-  --ig-cursor-bloom-peak: 2.5px;
+  stroke: #00e5ff; stroke-width: 2px;
+  --ig-cw: 2px; --ig-cw-peak: 3.5px;
 }
 
-/* The attention bloom: the outline repeatedly widens and contracts, and the
-   static glow filter swells with it. stroke-width is the ONLY animated
-   property — cheap vector repaint, no per-frame filter interpolation (the
-   Firefox CPU fix). No 0%/100% keyframe: the cycle starts/ends at each rule's
-   own base stroke-width, with the peak set per rule via the custom property.
-   It never animates group, element, or stroke opacity, so unrelated graph
-   content cannot be dimmed. Motion-gated like the highlight transition rule:
-   reduced-motion / animate=false keeps the conspicuous static outline and
-   halo without cycling. Phase note: emphasis.ts pins every ig-cursor-bloom
-   animation to startTime 0 (document timeline), so an endpoint that KEPT its
-   class across a target change can never cycle out of phase with the freshly
-   emphasized edge + other endpoint. */
-@keyframes ig-cursor-bloom {
-  50% { stroke-width: var(--ig-cursor-bloom-peak, 3.5px); }
+/* The pulse: a stroke-width heartbeat combined with a stroke-opacity breathe —
+   the outline SWELLS and brightens at the peak, then contracts and dims, so it
+   reads as an active pulse rather than a plain fade. STROKE ONLY (width +
+   stroke-opacity, never element/group opacity), so it can never dim the node's
+   fill or unrelated graph content. Both are cheap per-frame stroke repaints —
+   no SVG filter, no Gaussian blur — so the emphasis stays near-idle CPU (the
+   whole reason the v0.13 filter glow was reverted). Peak width is per-rule via
+   --ig-cw-peak; base == each rule's static width, so motion=false leaves a
+   solid, conspicuous outline with no cycling.
+   Phase note: emphasis.ts pins every ig-cursor-pulse animation to startTime 0
+   (document timeline), so an edge and its endpoint nodes — which start their
+   animations at different moments as the cursor moves — breathe in phase
+   instead of alternately. */
+@keyframes ig-cursor-pulse {
+  0%, 100% { stroke-width: var(--ig-cw, 3px);      stroke-opacity: 0.5; }
+  50%      { stroke-width: var(--ig-cw-peak, 5px); stroke-opacity: 1;   }
 }
 html.ig-motion #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) ellipse,
 html.ig-motion #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) polygon,
 html.ig-motion #app g.node.ig-cursor:not(.ig-selected):not(.ig-neighbor) path,
 html.ig-motion #app g.edge.ig-cursor:not(.ig-neighbor) path,
 html.ig-motion #app g.edge.ig-cursor:not(.ig-neighbor) polygon {
-  animation: ig-cursor-bloom 1.2s ease-in-out infinite;
+  animation: ig-cursor-pulse 1.6s ease-in-out infinite;
 }
 
 /* ── Search box (Story 5.3) ──────────────────────────────────────────────────

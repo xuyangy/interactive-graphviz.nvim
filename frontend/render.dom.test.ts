@@ -760,80 +760,18 @@ describe("cursor-echo emphasis (Story 6.3)", () => {
     expect(classesOf("g-c")).toEqual(["ig-cursor", "ig-dimmed"]); // both regimes live
   });
 
-  test("the stylesheet gives ig-cursor a repeating bloom without element opacity", () => {
+  test("the stylesheet styles ig-cursor via stroke only — never element opacity", () => {
     applyCursorEmphasis("a"); // forces stylesheet injection
     const css = document.getElementById("ig-style")!.textContent ?? "";
     expect(css).toContain(".ig-cursor");
-    expect(css).toContain("stroke: #4fc3f7");
-    // The glow is a REAL SVG filter reference — WebKit does not reliably
-    // render CSS filter functions (drop-shadow()) on SVG elements, so no
-    // cursor rule may use them (v0.12.0 Safari regression).
-    expect(css).toContain('filter: url("#ig-cursor-glow")');
-    expect(css).not.toContain("drop-shadow(");
-    // The bloom animates stroke-width ONLY — an animated filter forced
-    // Firefox to re-blur every frame (v0.12.0 CPU regression).
-    expect(css).toContain("@keyframes ig-cursor-bloom");
-    expect(css).not.toMatch(/@keyframes ig-cursor-bloom[^}]*filter/);
-    expect(css).toMatch(/animation:\s*ig-cursor-bloom[^;]*infinite/);
-    expect(css).toContain("html.ig-motion #app g.node.ig-cursor");
-    // No cursor rule may set element opacity: the glow is filter/stroke-only.
+    expect(css).toContain("stroke: #00e5ff");
+    // No rule may set element opacity for the cursor class (stroke-opacity in
+    // the pulse keyframes is fine — it breathes the outline, not the node).
     expect(css).not.toMatch(/ig-cursor[^{}]*\{[^}]*[^-]opacity\s*:/);
     // The precedence law is encoded in the selector: cursor yields to click/search.
     expect(css).toContain(".ig-cursor:not(.ig-selected):not(.ig-neighbor)");
     // Edge-line emphasis has its own rule, with the same yield law for edges.
     expect(css).toContain("g.edge.ig-cursor:not(.ig-neighbor)");
-  });
-
-  test("emphasis injects the ig-cursor-glow filter def in a carrier svg OUTSIDE the graph svg", () => {
-    applyCursorEmphasis("a");
-    const carrier = document.getElementById("ig-cursor-glow-defs")!;
-    expect(carrier).not.toBeNull();
-    const filter = carrier.querySelector("defs > filter#ig-cursor-glow");
-    expect(filter).not.toBeNull();
-    // Real SVG primitives, not CSS functions (the Safari-compatible glow
-    // path); exactly ONE blur — it re-runs every bloom frame, so a second
-    // pass is pure per-frame CPU (the Firefox regression).
-    expect(filter!.querySelectorAll("feGaussianBlur").length).toBe(1);
-    // Halo DENSITY comes from feMerge-stacking that single blurred result —
-    // merge nodes are cheap composites, never extra per-frame blur passes.
-    // One layer alone reads as a bare stroke pulse (v0.12.1 regression).
-    const glowNodes = filter!.querySelectorAll('feMerge > feMergeNode[in="glow"]');
-    expect(glowNodes.length).toBeGreaterThanOrEqual(3);
-    // The stacked result must be SHADOW-ONLY, with SourceGraphic merged
-    // exactly once (last, above the halo): stacking a feDropShadow-style
-    // shadow+source output stacks the ORIGINAL graphic too, turning
-    // translucent DOT fills more opaque whenever the cursor emphasized them.
-    const sourceNodes = filter!.querySelectorAll('feMerge > feMergeNode[in="SourceGraphic"]');
-    expect(sourceNodes.length).toBe(1);
-    expect(filter!.querySelector("feMerge")!.lastElementChild).toBe(sourceNodes[0]);
-    expect(filter!.querySelectorAll("feDropShadow").length).toBe(0);
-    // The edge variant (wider region for degenerate straight-spline bboxes).
-    expect(carrier.querySelector("defs > filter#ig-cursor-glow-edge")).not.toBeNull();
-    // NEVER inside the rendered svg: a foreign <defs> there breaks
-    // d3-graphviz's re-render data join (bogus "DOT parse error … reading
-    // 'key'"), and it would leak into the save-as-SVG export.
-    expect(document.getElementById("app")!.querySelector("filter#ig-cursor-glow")).toBeNull();
-
-    applyCursorEmphasis("b"); // idempotent: no duplicate def
-    expect(document.querySelectorAll("#ig-cursor-glow").length).toBe(1);
-  });
-
-  test("animate=false keeps the same target set as a strong static glow", () => {
-    setAnimate(false);
-    try {
-      applyCursorEmphasis("b->c");
-
-      expect(document.documentElement.classList.contains("ig-motion")).toBe(false);
-      expect(classesOf("g-bc")).toEqual(["ig-cursor"]);
-      expect(classesOf("g-b")).toEqual(["ig-cursor"]);
-      expect(classesOf("g-c")).toEqual(["ig-cursor"]);
-      const css = document.getElementById("ig-style")!.textContent ?? "";
-      expect(css).toContain('filter: url("#ig-cursor-glow")'); // base rule is the fallback
-      // The static glow needs the filter def even with motion off.
-      expect(document.querySelector("#ig-cursor-glow-defs filter#ig-cursor-glow")).not.toBeNull();
-    } finally {
-      setAnimate(true);
-    }
   });
 
   test("an edge key emphasizes the edge AND both endpoint nodes; last-wins; null clears", () => {

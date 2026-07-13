@@ -15,9 +15,7 @@ import { currentConfigSearch } from "./urlconfig";
  * never touched. The export is the clean graph as drawn (WYSIWYG, including
  * the current zoom/pan transform): the plugin's transient `ig-*` emphasis
  * classes are stripped (their stylesheet lives in <head> and would not ship
- * with the file; the #ig-cursor-glow filter def they reference lives in a
- * carrier svg OUTSIDE this one, so it never serializes), Graphviz's own
- * classes stay, and the root gets xmlns /
+ * with the file), Graphviz's own classes stay, and the root gets xmlns /
  * xmlns:xlink injected when missing plus an XML prolog — the proven pattern
  * from vscode-interactive-graphviz's content/save.js.
  */

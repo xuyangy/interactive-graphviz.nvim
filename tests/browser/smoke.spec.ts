@@ -308,64 +308,6 @@ test("preview renders a real graph and click-highlight works", async ({ page }) 
   await expect(nodeD).toHaveClass(/ig-selected/, { timeout: 5_000 });
   await expect(nodeC).toHaveClass(/ig-dimmed/);
 
-  // Cursor-echo glow (v0.12.0 issue triage 2026-07-12): three laws under a
-  // REAL engine. (1) The glow is a real SVG <filter> referenced via
-  // filter:url() — WebKit doesn't reliably render CSS filter functions on SVG
-  // elements, so drop-shadow() showed nothing in Safari. (2) The bloom
-  // animates stroke-width only — an animated filter re-blurred every frame in
-  // Firefox (~500% CPU). (3) Phase sync: an endpoint that KEEPS its class
-  // across a node-line → edge-line move must not keep an old animation phase
-  // while the edge + other endpoint start fresh (the endpoints blinked
-  // alternately). Clear the click highlight first so the cursor rules (which
-  // yield to ig-selected/ig-neighbor) own every target.
-  await page.keyboard.press("Escape");
-  proc.stdin!.write(
-    `${JSON.stringify({ type: "config_update", sessionId: 1, config: { animate: "1" } })}\n`,
-  );
-  // Rest the cursor on node b's line…
-  proc.stdin!.write(`${JSON.stringify({ type: "emphasize", sessionId: 1, nodeId: "b" })}\n`);
-  await expect(nodeB).toHaveClass(/ig-cursor/);
-  // …then half a bloom cycle later move onto its edge line b->c: b keeps its
-  // class (classList.add is a no-op — no animation restart) while the edge
-  // and c match the animation rule fresh. This is the exact desync recipe.
-  await page.waitForTimeout(600);
-  proc.stdin!.write(`${JSON.stringify({ type: "emphasize", sessionId: 1, nodeId: "b->c" })}\n`);
-  const edgeBC = page.locator("g.edge", { has: page.locator('title:text-is("b->c")') });
-  await expect(edgeBC).toHaveClass(/ig-cursor/);
-  await expect(nodeC).toHaveClass(/ig-cursor/);
-  // The filter def exists in its body-level carrier svg (outside the graph
-  // svg — inside it, d3-graphviz's next re-render data join breaks), and the
-  // emphasized edge's computed style references it.
-  expect(
-    await page.evaluate(
-      () =>
-        !!document.querySelector("svg#ig-cursor-glow-defs defs > filter#ig-cursor-glow > feGaussianBlur") &&
-        !document.querySelector("#app filter#ig-cursor-glow"),
-    ),
-  ).toBe(true);
-  expect(
-    await page.evaluate(
-      () => getComputedStyle(document.querySelector("#app g.edge.ig-cursor")!).filter,
-    ),
-  ).toContain("url(");
-  // Every running bloom is pinned to the document-timeline origin, so their
-  // currentTimes (sampled in one evaluate tick) are identical ⇒ same phase.
-  const phases = await page.evaluate(() =>
-    document
-      .getAnimations()
-      .filter((a) => (a as CSSAnimation).animationName === "ig-cursor-bloom")
-      .map((a) => ({ start: a.startTime, t: Math.round(a.currentTime as number) })),
-  );
-  expect(phases.length).toBeGreaterThanOrEqual(3); // b + c ellipses, edge spline (+arrowhead)
-  for (const p of phases) expect(p.start).toBe(0);
-  expect(new Set(phases.map((p) => p.t)).size).toBe(1);
-  // Clear the emphasis and re-disable animation so later legs stay deterministic.
-  proc.stdin!.write(`${JSON.stringify({ type: "emphasize", sessionId: 1, nodeId: null })}\n`);
-  await expect(edgeBC).not.toHaveClass(/ig-cursor/);
-  proc.stdin!.write(
-    `${JSON.stringify({ type: "config_update", sessionId: 1, config: { animate: "0" } })}\n`,
-  );
-
   // Full-graph fit beats the wheel's zoom floor: an 80-node chain in a
   // 500×300 window needs a scale far below d3-graphviz's default 0.1 lower
   // scaleExtent — Shift+F must relax the floor and land the ENTIRE graph

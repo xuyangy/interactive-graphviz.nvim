@@ -97,7 +97,7 @@ let _clusterModel: GraphModel | null = null;
 // whole cluster (members + intra-cluster edges). Documented in Dev Agent Record.
 let _clusterAugment = false;
 
-// The emphasis CSS (Selected/Neighbor/Dimmed treatment, cursor outline + glow,
+// The emphasis CSS (Selected/Neighbor/Dimmed treatment, cursor outline + pulse,
 // motion-gated transition) lives in styles.css — one build-time-inlined
 // stylesheet injected via ensureAppStyle() (plan item #2). WHICH classes are
 // set is decided here; HOW they look is decided there.
@@ -180,132 +180,18 @@ export function applyHighlightToDom(set: HighlightSet): void {
 // contend.
 let _cursorEmphasisNode: string | null = null;
 
-// The cursor glow is a real SVG <filter> referenced from styles.css via
-// filter:url(#ig-cursor-glow) — NOT a CSS drop-shadow() function chain, which
-// WebKit does not reliably render on SVG elements (Safari showed no glow at
-// all in v0.12.0). The def rides in its own zero-size carrier <svg> on <body>
-// (url(#) resolves document-wide), NEVER inside the rendered graph svg:
-// a foreign <defs> there breaks d3-graphviz's re-render data join ("Cannot
-// read properties of undefined (reading 'key')" surfaced as a bogus DOT parse
-// error), and outside the graph it also survives re-renders and stays out of
-// the save-as-SVG export without scrubbing. Hidden via width/height 0, NOT
-// display:none — Firefox ignores filter defs inside display:none subtrees.
-// The filter is static by design: styles.css animates only stroke-width (the
-// Firefox CPU fix), and the glow swells with the widening stroke for free.
-const GLOW_CARRIER_ID = "ig-cursor-glow-defs";
-const SVG_NS = "http://www.w3.org/2000/svg";
-function ensureCursorGlowFilter(): void {
-  if (document.getElementById(GLOW_CARRIER_ID)) return;
-  const carrier = document.createElementNS(SVG_NS, "svg");
-  carrier.setAttribute("id", GLOW_CARRIER_ID);
-  carrier.setAttribute("aria-hidden", "true");
-  carrier.setAttribute("style", "position:absolute;width:0;height:0;overflow:hidden");
-  const defs = document.createElementNS(SVG_NS, "defs");
-  // Two filters with the same shadows but different regions, because the blur
-  // re-runs over the whole region EVERY animation frame — region area is the
-  // Firefox CPU knob. Node shapes get a tight region: the halo reaches
-  // ~14px past the shape's geometric bbox (bloomed stroke/2 + 3·σ), and
-  // even the smallest default node (~54×36) keeps that inside -45%/-65%
-  // padding. Edge GROUPS need the wide region: their bbox minor dimension can
-  // be as small as the arrowhead (~7px) on a straight spline, so tight
-  // percentages would clip the halo flat along the run — but 600% of small
-  // stays small.
-  for (const [id, x, y, w, h] of [
-    ["ig-cursor-glow", "-45%", "-65%", "190%", "230%"],
-    ["ig-cursor-glow-edge", "-250%", "-250%", "600%", "600%"],
-  ]) {
-    const filter = document.createElementNS(SVG_NS, "filter");
-    filter.setAttribute("id", id);
-    filter.setAttribute("x", x);
-    filter.setAttribute("y", y);
-    filter.setAttribute("width", w);
-    filter.setAttribute("height", h);
-    // ONE blur pass, STACKED: a single gaussian layer reads as no glow at all
-    // (blurring a thin stroke band leaves only a faint fringe — v0.12.1
-    // looked like a bare stroke pulse), but each extra blur pass is per-frame
-    // CPU (the Firefox lesson, measured ~2× for two passes). So blur ONCE,
-    // then feMerge the SAME result several times — merge nodes are cheap
-    // composites, and stacking multiplies the halo's alpha toward opaque at
-    // the stroke while the outer tail stays soft: the neon look.
-    // The glow is built SHADOW-ONLY (blur SourceAlpha, flood the accent,
-    // composite in) rather than with feDropShadow: feDropShadow's output
-    // carries SourceGraphic on top, so stacking it would stack the original
-    // graphic too — a translucent DOT fill (alpha 0.2) turned ~2.5× more
-    // opaque (≈0.49) while cursor-emphasized. SourceGraphic merges exactly
-    // ONCE, last, keeping the crisp stroke above the halo.
-    // The stacked glow is then CLIPPED to outside the shape's silhouette
-    // (solidify SourceAlpha with a step transfer, composite the glow "out"
-    // of it): SourceAlpha includes the FILL, so an unclipped glow lights the
-    // whole interior and shows through translucent fills as a strong cyan
-    // wash (measured r 255→189 under an alpha-0.2 red fill). A solidified
-    // silhouette is required — "out" against the raw alpha only scales the
-    // wash by (1-fill alpha). Unfilled default nodes have interior alpha 0,
-    // so their familiar inward glow is untouched.
-    // σ4 × 3 stacks is calibrated for the near-native ~2px stroke: the halo
-    // peaks around HALF alpha right at the stroke (translucent — denser
-    // stacking reads as extra line thickness, not glow; picked from a
-    // rendered σ/stacks/opacity sweep) and fades out over ~10px.
-    // Gaussian-of-a-band falloff is steep — don't trust reach intuition,
-    // measure (glow-visual.spec.ts).
-    const blur = document.createElementNS(SVG_NS, "feGaussianBlur");
-    blur.setAttribute("in", "SourceAlpha");
-    blur.setAttribute("stdDeviation", "4");
-    blur.setAttribute("result", "blur");
-    filter.appendChild(blur);
-    const flood = document.createElementNS(SVG_NS, "feFlood");
-    flood.setAttribute("flood-color", "#4fc3f7");
-    flood.setAttribute("flood-opacity", "1");
-    flood.setAttribute("result", "color");
-    filter.appendChild(flood);
-    const composite = document.createElementNS(SVG_NS, "feComposite");
-    composite.setAttribute("in", "color");
-    composite.setAttribute("in2", "blur");
-    composite.setAttribute("operator", "in");
-    composite.setAttribute("result", "glowRaw");
-    filter.appendChild(composite);
-    const solidify = document.createElementNS(SVG_NS, "feComponentTransfer");
-    solidify.setAttribute("in", "SourceAlpha");
-    solidify.setAttribute("result", "solid");
-    const funcA = document.createElementNS(SVG_NS, "feFuncA");
-    funcA.setAttribute("type", "linear");
-    funcA.setAttribute("slope", "255");
-    funcA.setAttribute("intercept", "0");
-    solidify.appendChild(funcA);
-    filter.appendChild(solidify);
-    const clip = document.createElementNS(SVG_NS, "feComposite");
-    clip.setAttribute("in", "glowRaw");
-    clip.setAttribute("in2", "solid");
-    clip.setAttribute("operator", "out");
-    clip.setAttribute("result", "glow");
-    filter.appendChild(clip);
-    const merge = document.createElementNS(SVG_NS, "feMerge");
-    for (let i = 0; i < 3; i++) {
-      const mergeNode = document.createElementNS(SVG_NS, "feMergeNode");
-      mergeNode.setAttribute("in", "glow");
-      merge.appendChild(mergeNode);
-    }
-    const mergeSource = document.createElementNS(SVG_NS, "feMergeNode");
-    mergeSource.setAttribute("in", "SourceGraphic");
-    merge.appendChild(mergeSource);
-    filter.appendChild(merge);
-    defs.appendChild(filter);
-  }
-  carrier.appendChild(defs);
-  document.body.appendChild(carrier);
-}
-
-// Pin every running cursor-bloom animation to the same document-timeline
-// origin. Without this the bloom phases drift: a CSS animation starts when its
+// Pin every running cursor-pulse animation to the same document-timeline
+// origin. Without this the pulse phases drift: a CSS animation starts when its
 // element FIRST matches the rule, so moving the cursor from a node line onto
 // one of that node's edge lines keeps the endpoint's class (no restart) while
-// the edge + other endpoint start fresh — the endpoints then bloom
-// alternately instead of together (v0.12.0 issue #3). startTime 0 makes every
-// element's phase `now mod duration`, identical by construction; re-pinning an
-// already-pinned animation is a no-op. Guarded: happy-dom has no getAnimations.
-function syncCursorBloomPhase(): void {
+// the edge + other endpoint start fresh — the endpoints then breathe
+// alternately instead of together. startTime 0 makes every element's phase
+// `now mod duration`, identical by construction; re-pinning an already-pinned
+// animation is a no-op. Guarded: happy-dom has no getAnimations.
+function syncCursorPulsePhase(): void {
   if (typeof document.getAnimations !== "function") return;
   for (const anim of document.getAnimations()) {
-    if ((anim as CSSAnimation).animationName === "ig-cursor-bloom" && anim.startTime !== 0) {
+    if ((anim as CSSAnimation).animationName === "ig-cursor-pulse" && anim.startTime !== 0) {
       anim.startTime = 0;
     }
   }
@@ -339,7 +225,6 @@ export function applyCursorEmphasis(nodeId: string | null): void {
   if (appElement() === null) return;
   ensureAppStyle();
   const key = _cursorEmphasisNode;
-  if (key !== null) ensureCursorGlowFilter();
   // Edge pass first: it decides which endpoint nodes the node pass includes.
   let emphasizedEdge: Element | null = null;
   edgeEntries().forEach(({ el: g, title }) => {
@@ -364,7 +249,7 @@ export function applyCursorEmphasis(nodeId: string | null): void {
       g.classList.remove("ig-cursor");
     }
   });
-  syncCursorBloomPhase();
+  syncCursorPulsePhase();
   const panTarget = emphasizedEdge ?? emphasizedNode;
   if (panTarget !== null) _panHooks.panIntoView(panTarget);
   else _panHooks.cancelPan();
