@@ -2,7 +2,7 @@ local M = {}
 
 -- Prebuilt trust root: this tag's assets must match committed checksums.txt.
 local GITHUB_REPO = "xuyangy/interactive-graphviz-preview.nvim"
-local RELEASE_TAG = "v0.14.0"
+local RELEASE_TAG = "v0.15.0"
 local BIN_DIR = "dist/bin"
 -- Source-build fallback artifacts live under an ignored path (dist/ is gitignored)
 -- and are NEVER added to the committed checksums.txt trust root.
